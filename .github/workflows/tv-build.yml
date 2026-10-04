@@ -20,7 +20,14 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  TITLE: "Unofficial SONE build with TV mode (latest)"
   NOTES: >-
+    **Unofficial build** from the fork cccrrriii/sone, not made or supported
+    by the SONE developer. The official app is at
+    https://github.com/lullabyX/sone. Please report problems with the TV mode
+    to this fork, not upstream.
+
+
     Arch Linux: download the .pkg.tar.zst and install it with
     `sudo pacman -U <file>`. Ubuntu / Linux Mint / Debian: install the .deb.
     Other distros: the .AppImage (make it executable, then double-click).
@@ -38,11 +45,12 @@ jobs:
         run: |
           notes="Built from ${GITHUB_SHA::7}. $NOTES"
           if gh release view tv-build --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit tv-build --repo "$GITHUB_REPOSITORY" --notes "$notes"
+            gh release edit tv-build --repo "$GITHUB_REPOSITORY" \
+              --title "$TITLE" --notes "$notes"
           else
             gh release create tv-build --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --prerelease \
-              --title "SONE with TV mode (latest build)" --notes "$notes"
+              --title "$TITLE" --notes "$notes"
           fi
 
   arch:
@@ -97,7 +105,7 @@ jobs:
           cd /pkg
           # Own package name, so it can sit in place of an AUR/repo "sone".
           sed -i 's/^pkgname=sone$/pkgname=sone-tv/' PKGBUILD
-          sed -i 's/^pkgdesc=.*/pkgdesc="Tidal desktop app (SONE) with TV mode"/' PKGBUILD
+          sed -i 's/^pkgdesc=.*/pkgdesc="Unofficial SONE build with TV mode (not affiliated with upstream SONE)"/' PKGBUILD
           printf "provides=('sone')\nconflicts=('sone')\n" >> PKGBUILD
           chown -R builder /pkg
           su builder -c "makepkg --nodeps --noconfirm"
