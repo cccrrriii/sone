@@ -54,12 +54,26 @@ jobs:
     steps:
       - name: Install system dependencies
         run: |
-          pacman -Syu --noconfirm --needed \
-            base-devel git github-cli pkgconf curl file \
-            webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg openssl dbus \
-            gstreamer gst-plugins-base gst-plugins-base-libs \
-            gst-plugins-good gst-plugins-bad gst-plugins-bad-libs gst-libav \
-            libsecret alsa-lib libpulse xdg-utils nodejs npm rustup
+          # The image's single CDN mirror drops connections under parallel
+          # load; spread over several mirrors and retry the whole install.
+          cat > /etc/pacman.d/mirrorlist <<'MIRRORS'
+          Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+          Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch
+          Server = https://mirrors.kernel.org/archlinux/$repo/os/$arch
+          Server = https://fastly.mirror.pkgbuild.com/$repo/os/$arch
+          MIRRORS
+          sed -i 's/^ParallelDownloads.*/ParallelDownloads = 3/' /etc/pacman.conf
+          for attempt in 1 2 3; do
+            pacman -Syu --noconfirm --needed \
+              base-devel git github-cli pkgconf curl file \
+              webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg openssl dbus \
+              gstreamer gst-plugins-base gst-plugins-base-libs \
+              gst-plugins-good gst-plugins-bad gst-plugins-bad-libs gst-libav \
+              libsecret alsa-lib libpulse xdg-utils nodejs npm rustup \
+              && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 15
+          done
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
