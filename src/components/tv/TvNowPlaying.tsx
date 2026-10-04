@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
+  ChevronDown,
   Heart,
   Pause,
   Play,
@@ -149,7 +150,9 @@ export default function TvNowPlaying() {
   const icon = "w-[1.2rem] h-[1.2rem]";
 
   return (
-    <div className="relative min-h-full">
+    // The player fills the first screen; "Up next" starts below the fold and
+    // scrolls into view only when focus moves down into it.
+    <div className="relative h-full">
       {/* Blurred cover backdrop */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         {cover && (
@@ -162,10 +165,12 @@ export default function TvNowPlaying() {
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-th-base/60 to-th-base" />
       </div>
 
-      <div className="relative flex items-center gap-[3rem] px-[4rem] pt-[3rem] pb-[2rem]">
+      <div className="relative h-full flex items-center gap-[3.5rem] px-[4rem] py-[2.5rem]">
         <div
           className={`shrink-0 overflow-hidden rounded-[1rem] shadow-2xl bg-th-surface ${
-            isVideo ? "w-[30rem] aspect-video" : "w-[22rem] aspect-square"
+            isVideo
+              ? "w-[min(55vw,60rem)] aspect-video"
+              : "h-[min(72vh,40rem)] aspect-square"
           }`}
         >
           <TidalImage
@@ -251,6 +256,9 @@ export default function TvNowPlaying() {
               }
               onClick={() => setRepeat((repeat + 1) % 3)}
             />
+          </div>
+
+          <div className="mt-[1rem] flex flex-wrap items-center gap-[0.8rem]">
             {!isVideo && (
               <TvButton
                 title={liked ? "Remove from My Tracks" : "Add to My Tracks"}
@@ -299,10 +307,19 @@ export default function TvNowPlaying() {
             )}
           </div>
         </div>
+
+        {upNext.length > 0 && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-[1rem] flex items-center justify-center gap-[0.4rem] text-[0.7rem] text-th-text-muted">
+            <ChevronDown className="w-[1rem] h-[1rem]" />
+            <span className="truncate max-w-[40rem]">
+              Up next: {upNext[0].title}
+            </span>
+          </div>
+        )}
       </div>
 
       {upNext.length > 0 && (
-        <section className="relative px-[3rem] pb-[3rem]">
+        <section className="relative px-[3rem] pt-[1.5rem] pb-[3rem]">
           <h2 className="text-[1.05rem] font-bold text-th-text-primary px-[1rem] mb-[0.4rem]">
             Up next
           </h2>

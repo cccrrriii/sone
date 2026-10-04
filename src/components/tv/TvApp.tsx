@@ -240,6 +240,14 @@ export default function TvApp() {
     setStack([entry({ type })]);
   }, []);
 
+  /** Put a screen on the stack, remembering where focus was below it. */
+  const stackPush = useCallback((view: TvView) => {
+    const top = stackRef.current[stackRef.current.length - 1];
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) savedFocus.current.set(top.id, active);
+    setStack((s) => [...s, entry(view)]);
+  }, []);
+
   const push = useCallback(
     (view: TvView) => {
       if (
@@ -251,13 +259,18 @@ export default function TvApp() {
         goTo(view.type);
         return;
       }
-      const top = stackRef.current[stackRef.current.length - 1];
-      const active = document.activeElement;
-      if (active instanceof HTMLElement) savedFocus.current.set(top.id, active);
-      setStack((s) => [...s, entry(view)]);
+      stackPush(view);
     },
-    [goTo],
+    [goTo, stackPush],
   );
+
+  // Starting playback opens Now Playing on top of the current screen, so
+  // Back returns to the album or list it was started from.
+  const showNowPlaying = useCallback(() => {
+    const s = stackRef.current;
+    if (s[s.length - 1].view.type === "nowPlaying") return;
+    stackPush({ type: "nowPlaying" });
+  }, [stackPush]);
 
   const focusRail = useCallback(() => {
     const rail = railRef.current;
@@ -313,14 +326,18 @@ export default function TvApp() {
               allTracks: tracks,
             },
           });
+          showNowPlaying();
           return;
         }
       }
     },
-    [push, playMedia, playFromSource],
+    [push, playMedia, playFromSource, showNowPlaying],
   );
 
-  const nav = useMemo<TvNav>(() => ({ push, back, run }), [push, back, run]);
+  const nav = useMemo<TvNav>(
+    () => ({ push, back, run, showNowPlaying }),
+    [push, back, run, showNowPlaying],
+  );
 
   // The desktop "focus search" shortcut opens the Search screen here.
   useEffect(() => {

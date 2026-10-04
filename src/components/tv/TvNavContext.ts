@@ -7,6 +7,8 @@ export interface TvNav {
   /** Open a screen on top of the current one; Back returns to it. */
   push: (view: TvView) => void;
   back: () => void;
+  /** Show Now Playing on top of the current screen (after starting playback). */
+  showNowPlaying: () => void;
   /** Carry out a card's action. `queue` is the row it sits in, so playing a
    *  track keeps the rest of that row queued behind it. */
   run: (

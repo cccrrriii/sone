@@ -72,7 +72,10 @@ export default function TvArtistScreen({
             autoFocus
             icon={<Play className="w-[1rem] h-[1rem]" fill="currentColor" />}
             label="Play"
-            onClick={() => void playAllFromSource(data.topTracks, { source })}
+            onClick={() => {
+              void playAllFromSource(data.topTracks, { source });
+              nav.showNowPlaying();
+            }}
           />
         )}
         {data.radioMixId && (
@@ -123,9 +126,10 @@ export default function TvArtistScreen({
                 track={track}
                 index={i}
                 showCover
-                onSelect={() =>
-                  void playFromSource(track, data.topTracks, { source })
-                }
+                onSelect={() => {
+                  void playFromSource(track, data.topTracks, { source });
+                  nav.showNowPlaying();
+                }}
               />
             ))}
           </div>
