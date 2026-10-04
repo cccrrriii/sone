@@ -119,6 +119,7 @@ function Screen({ active, view }: { active: boolean; view: TvView }) {
       <div
         ref={ref}
         data-tv-remember
+        data-tv-scroll-root
         className={`tv-screen absolute inset-0 overflow-y-auto overflow-x-hidden ${
           active ? "" : "hidden"
         }`}
@@ -240,6 +241,14 @@ export default function TvApp() {
     setStack([entry({ type })]);
   }, []);
 
+  /** Put a screen on the stack, remembering where focus was below it. */
+  const stackPush = useCallback((view: TvView) => {
+    const top = stackRef.current[stackRef.current.length - 1];
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) savedFocus.current.set(top.id, active);
+    setStack((s) => [...s, entry(view)]);
+  }, []);
+
   const push = useCallback(
     (view: TvView) => {
       if (
@@ -251,13 +260,18 @@ export default function TvApp() {
         goTo(view.type);
         return;
       }
-      const top = stackRef.current[stackRef.current.length - 1];
-      const active = document.activeElement;
-      if (active instanceof HTMLElement) savedFocus.current.set(top.id, active);
-      setStack((s) => [...s, entry(view)]);
+      stackPush(view);
     },
-    [goTo],
+    [goTo, stackPush],
   );
+
+  // Starting playback opens Now Playing on top of the current screen, so
+  // Back returns to the album or list it was started from.
+  const showNowPlaying = useCallback(() => {
+    const s = stackRef.current;
+    if (s[s.length - 1].view.type === "nowPlaying") return;
+    stackPush({ type: "nowPlaying" });
+  }, [stackPush]);
 
   const focusRail = useCallback(() => {
     const rail = railRef.current;
@@ -294,6 +308,18 @@ export default function TvApp() {
     }
   }, [stack]);
 
+  // Picking the track that is already playing just shows it rather than
+  // restarting it from the beginning.
+  const playTrack = useCallback<TvNav["playTrack"]>(
+    (track, tracks, options) => {
+      if (store.get(currentTrackAtom)?.id !== track.id) {
+        void playFromSource(track, tracks, options);
+      }
+      showNowPlaying();
+    },
+    [store, playFromSource, showNowPlaying],
+  );
+
   const run = useCallback<TvNav["run"]>(
     (action: TvAction, queue) => {
       switch (action.kind) {
@@ -305,7 +331,7 @@ export default function TvApp() {
           return;
         case "playTrack": {
           const tracks = queue?.tracks.length ? queue.tracks : [action.track];
-          void playFromSource(action.track, tracks, {
+          playTrack(action.track, tracks, {
             source: {
               type: "tv-row",
               id: queue?.id ?? action.track.id,
@@ -317,10 +343,13 @@ export default function TvApp() {
         }
       }
     },
-    [push, playMedia, playFromSource],
+    [push, playMedia, playTrack],
   );
 
-  const nav = useMemo<TvNav>(() => ({ push, back, run }), [push, back, run]);
+  const nav = useMemo<TvNav>(
+    () => ({ push, back, run, showNowPlaying, playTrack }),
+    [push, back, run, showNowPlaying, playTrack],
+  );
 
   // The desktop "focus search" shortcut opens the Search screen here.
   useEffect(() => {
@@ -383,8 +412,11 @@ export default function TvApp() {
     return () => window.removeEventListener("keydown", onKey);
   }, [store, back, togglePlayPause, playNext, playPrevious]);
 
-  const rootType = stack[0].view.type;
+  // Now Playing opened on top of another screen still counts as being on
+  // Now Playing for the rail's highlight.
   const top = stack[stack.length - 1];
+  const rootType =
+    top.view.type === "nowPlaying" ? "nowPlaying" : stack[0].view.type;
 
   return (
     <TvNavContext.Provider value={nav}>
@@ -399,6 +431,7 @@ export default function TvApp() {
           <nav
             ref={railRef}
             data-tv-remember
+            data-tv-side
             aria-label="Main"
             className="tv-rail group overflow-hidden absolute inset-y-0 left-0 z-20 flex flex-col gap-[0.4rem] py-[2rem] px-[0.8rem] bg-th-sidebar"
           >
@@ -434,10 +467,7 @@ export default function TvApp() {
             </button>
           </nav>
 
-          <main
-            data-tv-remember
-            className="absolute inset-y-0 right-0 left-[4.5rem] bg-th-base"
-          >
+          <main data-tv-remember className="absolute inset-0 bg-th-base">
             {stack.map((e) => (
               <Screen key={e.id} view={e.view} active={e.id === top.id} />
             ))}

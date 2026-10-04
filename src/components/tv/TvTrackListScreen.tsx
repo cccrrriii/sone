@@ -139,7 +139,7 @@ function sourceId(view: ListView): string | number {
 export default function TvTrackListScreen({ view }: { view: ListView }) {
   const nav = useTvNav();
   const userId = useAtomValue(authTokensAtom)?.user_id;
-  const { playFromSource, playAllFromSource, setShuffledQueue, playTrack } =
+  const { playAllFromSource, setShuffledQueue, playTrack } =
     usePlaybackActions();
   const load = useCallback(() => loadList(view, userId), [view, userId]);
   const { data, error, retry } = useTvLoader(load, "Couldn't load tracks");
@@ -163,6 +163,7 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
   // a one-off shuffled run that leaves the setting alone.
   const playAll = () => {
     void playAllFromSource(data.tracks, { source, albumMode });
+    nav.showNowPlaying();
   };
   const shufflePlay = () => {
     const playable = data.tracks.filter((t) => !isTrackUnavailable(t));
@@ -171,6 +172,7 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
     const rest = playable.filter((_, i) => i !== pick);
     setShuffledQueue(rest, { source, albumMode });
     void playTrack(playable[pick]);
+    nav.showNowPlaying();
   };
 
   return (
@@ -225,7 +227,7 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
               index={i}
               showCover={view.type !== "album"}
               onSelect={() =>
-                void playFromSource(track, data.tracks, { source, albumMode })
+                nav.playTrack(track, data.tracks, { source, albumMode })
               }
             />
           ))}

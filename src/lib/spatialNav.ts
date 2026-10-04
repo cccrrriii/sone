@@ -20,6 +20,7 @@ export interface Box {
 
 const FOCUSABLE = "[data-tv-focusable]";
 const REMEMBER = "[data-tv-remember]";
+const SIDE = "[data-tv-side]";
 
 /** How much the sideways offset counts against the forward distance. A
  *  candidate straight ahead beats a nearer one far off to the side. */
@@ -137,7 +138,23 @@ function resolveRemembered(from: HTMLElement, target: HTMLElement) {
 
 export function focusElement(el: HTMLElement) {
   el.focus({ preventScroll: true });
-  el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  // Inside a `data-tv-scroll-top` block the whole block is brought into
+  // view from its top, not just the focused item — coming back up to the
+  // player from the queue below shows the full player again.
+  const block = el.closest<HTMLElement>("[data-tv-scroll-top]");
+  if (block) block.scrollIntoView({ block: "start", inline: "nearest" });
+  else el.scrollIntoView({ block: "nearest", inline: "nearest" });
+
+  // Reaching the topmost item of a screen scrolls it all the way up, so the
+  // header or first row title above it is not left cut off.
+  const root = el.closest<HTMLElement>("[data-tv-scroll-root]");
+  if (root && root.scrollTop > 0) {
+    const top = el.getBoundingClientRect().top;
+    const above = focusableIn(root).some(
+      (other) => other !== el && other.getBoundingClientRect().bottom <= top,
+    );
+    if (!above) root.scrollTop = 0;
+  }
 }
 
 /** Move focus one step within `scope`. Returns false when nothing lies in
@@ -156,7 +173,13 @@ export function moveFocus(scope: HTMLElement, dir: Direction): boolean {
   // behind it, while Left/Right at the end of a row falls through to the
   // next group out.
   const from = current.getBoundingClientRect();
-  const others = all.filter((el) => el !== current);
+  // A side panel (`data-tv-side`, the nav rail) is entered sideways only:
+  // Up/Down past the top or bottom of the content must not land in it.
+  const sideways = dir === "left" || dir === "right";
+  const inSide = !!current.closest(SIDE);
+  const others = all.filter(
+    (el) => el !== current && (sideways || inSide || !el.closest(SIDE)),
+  );
   let group: Element | null = current.parentElement?.closest(REMEMBER) ?? null;
   while (true) {
     const pool = group ? others.filter((el) => group!.contains(el)) : others;

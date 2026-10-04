@@ -31,7 +31,7 @@ export default function TvArtistScreen({
   view: Extract<TvView, { type: "artist" }>;
 }) {
   const nav = useTvNav();
-  const { playFromSource, playAllFromSource } = usePlaybackActions();
+  const { playAllFromSource } = usePlaybackActions();
   const { followedArtistIds, followArtist, unfollowArtist } = useFavorites();
   const load = useCallback(() => getArtistPage(view.id), [view.id]);
   const { data, error, retry } = useTvLoader(load, "Couldn't load artist");
@@ -72,7 +72,10 @@ export default function TvArtistScreen({
             autoFocus
             icon={<Play className="w-[1rem] h-[1rem]" fill="currentColor" />}
             label="Play"
-            onClick={() => void playAllFromSource(data.topTracks, { source })}
+            onClick={() => {
+              void playAllFromSource(data.topTracks, { source });
+              nav.showNowPlaying();
+            }}
           />
         )}
         {data.radioMixId && (
@@ -124,7 +127,7 @@ export default function TvArtistScreen({
                 index={i}
                 showCover
                 onSelect={() =>
-                  void playFromSource(track, data.topTracks, { source })
+                  nav.playTrack(track, data.topTracks, { source })
                 }
               />
             ))}

@@ -1,3 +1,11 @@
+> [!WARNING]
+> **This is an unofficial fork** of [SONE by lullabyX](https://github.com/lullabyX/sone). It adds an experimental **TV mode** (a fullscreen interface for media PCs, controlled with a remote or arrow keys) and is **not made, endorsed or supported by the SONE developer**.
+>
+> - For the official app, installation and support, go to **[lullabyX/sone](https://github.com/lullabyX/sone)**.
+> - Please report problems with SONE itself there. Only report problems with the TV mode here.
+> - The TV mode has been proposed upstream in [lullabyX/sone#242](https://github.com/lullabyX/sone/issues/242).
+> - Unofficial builds with the TV mode: [tv-build release](https://github.com/cccrrriii/sone/releases/tag/tv-build). See [TV mode](#tv-mode) below for how to use it.
+
 <div align="center">
   <img src="sone.png" alt="SONE" width="150">
   <h1>SONE</h1>

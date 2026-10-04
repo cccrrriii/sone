@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
+  ChevronDown,
   Heart,
+  Mic2,
   Pause,
   Play,
   Repeat,
@@ -22,6 +24,7 @@ import {
   streamInfoAtom,
 } from "../../atoms/playback";
 import { currentVideoAtom, videoExpandedAtom } from "../../atoms/video";
+import { tvLyricsAtom } from "../../atoms/tv";
 import { useFavorites } from "../../hooks/useFavorites";
 import { usePlaybackActions } from "../../hooks/usePlaybackActions";
 import { formatTime } from "../../lib/format";
@@ -34,6 +37,8 @@ import {
 } from "../../utils/itemHelpers";
 import { useTvInitialFocus, useTvNav } from "./TvNavContext";
 import { TvButton, TvTrackRow } from "./TvParts";
+import { TvLyricsPanel } from "./TvLyrics";
+import { useTvLyrics } from "./useTvLyrics";
 
 const SEEK_STEP_SECS = 10;
 const UP_NEXT_SHOWN = 20;
@@ -110,6 +115,10 @@ export default function TvNowPlaying() {
   const [repeat, setRepeat] = useAtom(repeatAtom);
   const currentVideo = useAtomValue(currentVideoAtom);
   const setVideoExpanded = useSetAtom(videoExpandedAtom);
+  const [lyricsOn, setLyricsOn] = useAtom(tvLyricsAtom);
+  const lyrics = useTvLyrics(
+    track && track.itemType !== "video" ? track.id : undefined,
+  );
   const { favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack } =
     useFavorites();
   const {
@@ -147,9 +156,12 @@ export default function TvNowPlaying() {
   const artist = track.artist ?? track.artists?.[0];
   const quality = isVideo ? "" : formatStreamQuality(streamInfo);
   const icon = "w-[1.2rem] h-[1.2rem]";
+  const showLyrics = lyricsOn && !!lyrics;
 
   return (
-    <div className="relative min-h-full">
+    // The player fills the first screen; "Up next" starts below the fold and
+    // scrolls into view only when focus moves down into it.
+    <div className="relative h-full">
       {/* Blurred cover backdrop */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         {cover && (
@@ -162,18 +174,29 @@ export default function TvNowPlaying() {
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-th-base/60 to-th-base" />
       </div>
 
-      <div className="relative flex items-center gap-[3rem] px-[4rem] pt-[3rem] pb-[2rem]">
-        <div
-          className={`shrink-0 overflow-hidden rounded-[1rem] shadow-2xl bg-th-surface ${
-            isVideo ? "w-[30rem] aspect-video" : "w-[22rem] aspect-square"
-          }`}
-        >
-          <TidalImage
-            src={cover || undefined}
-            alt=""
-            className="w-full h-full"
-          />
-        </div>
+      <div
+        data-tv-scroll-top
+        className="relative h-full flex items-center gap-[3.5rem] px-[4rem] py-[2.5rem]"
+      >
+        {showLyrics ? (
+          <div className="shrink-0 h-[min(72vh,40rem)] w-[min(46vw,48rem)]">
+            <TvLyricsPanel lyrics={lyrics} duration={track.duration ?? 0} />
+          </div>
+        ) : (
+          <div
+            className={`shrink-0 overflow-hidden rounded-[1rem] shadow-2xl bg-th-surface ${
+              isVideo
+                ? "w-[min(55vw,60rem)] aspect-video"
+                : "h-[min(72vh,40rem)] aspect-square"
+            }`}
+          >
+            <TidalImage
+              src={cover || undefined}
+              alt=""
+              className="w-full h-full"
+            />
+          </div>
+        )}
 
         <div className="min-w-0 flex-1">
           <h1 className="text-[2.4rem] font-extrabold leading-tight text-th-text-primary line-clamp-2">
@@ -251,6 +274,9 @@ export default function TvNowPlaying() {
               }
               onClick={() => setRepeat((repeat + 1) % 3)}
             />
+          </div>
+
+          <div className="mt-[1rem] flex flex-wrap items-center gap-[0.8rem]">
             {!isVideo && (
               <TvButton
                 title={liked ? "Remove from My Tracks" : "Add to My Tracks"}
@@ -268,6 +294,15 @@ export default function TvNowPlaying() {
                       : addFavoriteTrack(track.id, track)
                   ).catch(() => {})
                 }
+              />
+            )}
+            {lyrics && (
+              <TvButton
+                active={lyricsOn}
+                icon={<Mic2 className={icon} />}
+                label="Lyrics"
+                title={lyricsOn ? "Show cover" : "Show lyrics"}
+                onClick={() => setLyricsOn(!lyricsOn)}
               />
             )}
             {isVideo && currentVideo && (
@@ -299,10 +334,19 @@ export default function TvNowPlaying() {
             )}
           </div>
         </div>
+
+        {upNext.length > 0 && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-[1rem] flex items-center justify-center gap-[0.4rem] text-[0.7rem] text-th-text-muted">
+            <ChevronDown className="w-[1rem] h-[1rem]" />
+            <span className="truncate max-w-[40rem]">
+              Up next: {upNext[0].title}
+            </span>
+          </div>
+        )}
       </div>
 
       {upNext.length > 0 && (
-        <section className="relative px-[3rem] pb-[3rem]">
+        <section className="relative px-[3rem] pt-[1.5rem] pb-[3rem]">
           <h2 className="text-[1.05rem] font-bold text-th-text-primary px-[1rem] mb-[0.4rem]">
             Up next
           </h2>

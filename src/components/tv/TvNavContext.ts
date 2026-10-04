@@ -1,12 +1,24 @@
 import { createContext, useContext, useEffect } from "react";
 import { focusFirstIn } from "../../lib/spatialNav";
 import type { Track } from "../../types";
+import type { usePlaybackActions } from "../../hooks/usePlaybackActions";
 import type { TvAction, TvView } from "./tvItems";
 
 export interface TvNav {
   /** Open a screen on top of the current one; Back returns to it. */
   push: (view: TvView) => void;
   back: () => void;
+  /** Show Now Playing on top of the current screen (after starting playback). */
+  showNowPlaying: () => void;
+  /** Play `track` with `tracks` queued around it and show Now Playing. If
+   *  it is the track already playing, it only shows Now Playing. */
+  playTrack: (
+    track: Track,
+    tracks: Track[],
+    options?: Parameters<
+      ReturnType<typeof usePlaybackActions>["playFromSource"]
+    >[2],
+  ) => void;
   /** Carry out a card's action. `queue` is the row it sits in, so playing a
    *  track keeps the rest of that row queued behind it. */
   run: (

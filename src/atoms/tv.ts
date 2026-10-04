@@ -7,3 +7,7 @@ import { atomWithStorage } from "jotai/utils";
 export const tvModeAtom = atomWithStorage("sone.tvMode.v1", false, undefined, {
   getOnInit: true,
 });
+
+/** Now Playing shows the lyrics in place of the cover (when the track has
+ *  any). Remembered, so it stays on from track to track. */
+export const tvLyricsAtom = atomWithStorage("sone.tvLyrics.v1", false);

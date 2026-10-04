@@ -1,8 +1,10 @@
 /* TV interface. Sizes are in rem and the root font size follows the screen
-   width, so the layout looks the same from 720p to 4K at couch distance:
-   1920px wide → 24px per rem. */
+   size, so the layout looks the same from 720p to 4K at couch distance:
+   1920x1080 → 24px per rem. Whichever of width and height is relatively
+   smaller wins, so an ultrawide screen gets the size of a 16:9 screen of
+   the same height (plus more cards per row) instead of oversized UI. */
 html.tv-mode {
-  font-size: clamp(14px, 1.25vw, 72px);
+  font-size: clamp(14px, min(1.25vw, 2.2222vh), 72px);
 }
 
 .tv-cursor-hidden,
@@ -80,24 +82,20 @@ html.tv-mode {
   opacity: 1;
 }
 
-/* ── Nav rail: icons only, expands over the content while it has focus ── */
+/* ── Nav rail: hidden off-screen, slides in while it has focus ──────
+   It stays laid out (only translated away), so Left from the leftmost
+   item and Back can still move focus into it. */
 
 .tv-rail {
-  width: 4.5rem;
+  width: 15rem;
+  transform: translateX(-100%);
   transition:
-    width 160ms ease-out,
-    box-shadow 160ms ease-out;
+    transform 180ms ease-out,
+    box-shadow 180ms ease-out;
 }
 .tv-rail:focus-within {
-  width: 15rem;
+  transform: translateX(0);
   box-shadow: 1rem 0 3rem rgba(0, 0, 0, 0.45);
-}
-.tv-rail-label {
-  opacity: 0;
-  transition: opacity 120ms ease-out;
-}
-.tv-rail:focus-within .tv-rail-label {
-  opacity: 1;
 }
 .tv-rail-item:focus {
   background: var(--th-hl-med);

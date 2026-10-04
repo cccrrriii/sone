@@ -34,6 +34,8 @@ export interface TvEntry {
   subtitle: string;
   image: string;
   round?: boolean;
+  /** Drawn in place of artwork when the entry has none (My Tracks). */
+  icon?: "heart";
   action: TvAction;
 }
 
@@ -97,6 +99,7 @@ function toTvEntry(item: any, sectionType?: string): TvEntry | null {
       title: title || "My Tracks",
       subtitle: subtitle || "Your favorite tracks",
       image: getItemImage(item, 640),
+      icon: "heart",
       action: { kind: "open", view: { type: "favorites" } },
     };
   }

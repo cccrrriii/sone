@@ -26,6 +26,7 @@ const MY_TRACKS: TvEntry = {
   title: "My Tracks",
   subtitle: "Your favorite tracks",
   image: "",
+  icon: "heart",
   action: { kind: "open", view: { type: "favorites" } },
 };
 

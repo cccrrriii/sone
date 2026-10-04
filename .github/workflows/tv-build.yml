@@ -1,0 +1,195 @@
+name: TV build
+
+# Builds installable SONE packages with TV mode and attaches them to the
+# "tv-build" pre-release, replacing the previous files, so the latest build
+# is always on the same download page:
+#   - an Arch Linux package (built natively on Arch, uses the system's libs)
+#   - an AppImage and a .deb (built on Ubuntu 22.04)
+on:
+  push:
+    branches:
+      - master
+      - claude/ecstatic-ritchie-yiqsb8
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tv-build
+  cancel-in-progress: true
+
+env:
+  TITLE: "Unofficial SONE build with TV mode (latest)"
+  NOTES: >-
+    **Unofficial build** from the fork cccrrriii/sone, not made or supported
+    by the SONE developer. The official app is at
+    https://github.com/lullabyX/sone. Please report problems with the TV mode
+    to this fork, not upstream.
+
+
+    Arch Linux: download the .pkg.tar.zst and install it with
+    `sudo pacman -U <file>`. Ubuntu / Linux Mint / Debian: install the .deb.
+    Other distros: the .AppImage (make it executable, then double-click).
+    In SONE, open the user menu and choose **TV mode**, or start it with
+    `sone --tv`.
+
+jobs:
+  release:
+    name: Prepare release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Create or update the tv-build pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Built from ${GITHUB_SHA::7}. $NOTES"
+          if gh release view tv-build --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit tv-build --repo "$GITHUB_REPOSITORY" \
+              --title "$TITLE" --notes "$notes"
+          else
+            gh release create tv-build --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "$TITLE" --notes "$notes"
+          fi
+
+  arch:
+    name: Arch Linux package
+    needs: release
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    timeout-minutes: 90
+    steps:
+      - name: Install system dependencies
+        run: |
+          # The image's single CDN mirror drops connections under parallel
+          # load; spread over several mirrors and retry the whole install.
+          cat > /etc/pacman.d/mirrorlist <<'MIRRORS'
+          Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+          Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch
+          Server = https://mirrors.kernel.org/archlinux/$repo/os/$arch
+          Server = https://fastly.mirror.pkgbuild.com/$repo/os/$arch
+          MIRRORS
+          sed -i 's/^ParallelDownloads.*/ParallelDownloads = 3/' /etc/pacman.conf
+          for attempt in 1 2 3; do
+            pacman -Syu --noconfirm --needed \
+              base-devel git github-cli pkgconf curl file \
+              webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg openssl dbus \
+              gstreamer gst-plugins-base gst-plugins-base-libs \
+              gst-plugins-good gst-plugins-bad gst-plugins-bad-libs gst-libav \
+              libsecret alsa-lib libpulse xdg-utils nodejs npm rustup \
+              && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 15
+          done
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build app
+        run: |
+          rustup default stable
+          npm install -g pnpm@11.1.3
+          pnpm install --frozen-lockfile
+          # Tauri cannot emit a pacman package; the PKGBUILD repackages the .deb.
+          pnpm tauri build --bundles deb
+
+      - name: Build pacman package
+        run: |
+          useradd -m builder
+          mkdir /pkg
+          cp build-scripts/build/PKGBUILD /pkg/
+          cp src-tauri/target/release/bundle/deb/SONE_*.deb /pkg/sone.deb
+          cd /pkg
+          # Own package name, so it can sit in place of an AUR/repo "sone".
+          sed -i 's/^pkgname=sone$/pkgname=sone-tv/' PKGBUILD
+          sed -i 's/^pkgdesc=.*/pkgdesc="Unofficial SONE build with TV mode (not affiliated with upstream SONE)"/' PKGBUILD
+          printf "provides=('sone')\nconflicts=('sone')\n" >> PKGBUILD
+          chown -R builder /pkg
+          su builder -c "makepkg --nodeps --noconfirm"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          gh release upload tv-build /pkg/*.pkg.tar.zst --clobber --repo "$GITHUB_REPOSITORY"
+
+  ubuntu:
+    name: AppImage and .deb
+    needs: release
+    # 22.04 keeps the AppImage runnable on older distros (glibc 2.35).
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          # The runner image preinstalls libunwind-14-dev, which blocks
+          # libgstreamer1.0-dev's libunwind-dev dependency unless it is
+          # requested explicitly (apt then swaps the two).
+          sudo apt-get install --no-install-recommends -y \
+            libunwind-dev \
+            build-essential \
+            pkg-config \
+            file \
+            patchelf \
+            libfuse2 \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libdbus-1-dev \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-libav \
+            gstreamer1.0-alsa \
+            libsecret-1-dev \
+            libasound2-dev \
+            xdg-utils
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch @ 2026-09-03
+        with:
+          toolchain: stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+          key: tv-build
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app
+        run: pnpm tauri build --bundles appimage,deb
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload tv-build \
+            src-tauri/target/release/bundle/appimage/*.AppImage \
+            src-tauri/target/release/bundle/deb/*.deb \
+            --clobber --repo "$GITHUB_REPOSITORY"
