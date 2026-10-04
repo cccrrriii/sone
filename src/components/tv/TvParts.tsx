@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useAtomValue } from "jotai";
-import { AudioLines } from "lucide-react";
+import { AudioLines, Heart } from "lucide-react";
 import TidalImage from "../TidalImage";
 import { currentTrackAtom, isPlayingAtom } from "../../atoms/playback";
 import { formatTime } from "../../lib/format";
@@ -31,12 +31,18 @@ function TvCard({
           entry.round ? "rounded-full" : "rounded-[0.6rem]"
         } ${wide ? "aspect-[11/8]" : "aspect-square"}`}
       >
-        <TidalImage
-          src={entry.image || undefined}
-          alt={entry.title}
-          type={entry.round ? "artist" : "album"}
-          className="w-full h-full"
-        />
+        {!entry.image && entry.icon === "heart" ? (
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-th-accent to-th-surface">
+            <Heart className="w-[38%] h-[38%] text-white" fill="currentColor" />
+          </div>
+        ) : (
+          <TidalImage
+            src={entry.image || undefined}
+            alt={entry.title}
+            type={entry.round ? "artist" : "album"}
+            className="w-full h-full"
+          />
+        )}
       </div>
       <div
         className={`mt-[0.6rem] px-[0.15rem] ${entry.round ? "text-center" : ""}`}

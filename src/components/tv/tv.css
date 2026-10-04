@@ -1,8 +1,10 @@
 /* TV interface. Sizes are in rem and the root font size follows the screen
-   width, so the layout looks the same from 720p to 4K at couch distance:
-   1920px wide → 24px per rem. */
+   size, so the layout looks the same from 720p to 4K at couch distance:
+   1920x1080 → 24px per rem. Whichever of width and height is relatively
+   smaller wins, so an ultrawide screen gets the size of a 16:9 screen of
+   the same height (plus more cards per row) instead of oversized UI. */
 html.tv-mode {
-  font-size: clamp(14px, 1.25vw, 72px);
+  font-size: clamp(14px, min(1.25vw, 2.2222vh), 72px);
 }
 
 .tv-cursor-hidden,

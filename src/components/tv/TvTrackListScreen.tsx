@@ -139,7 +139,7 @@ function sourceId(view: ListView): string | number {
 export default function TvTrackListScreen({ view }: { view: ListView }) {
   const nav = useTvNav();
   const userId = useAtomValue(authTokensAtom)?.user_id;
-  const { playFromSource, playAllFromSource, setShuffledQueue, playTrack } =
+  const { playAllFromSource, setShuffledQueue, playTrack } =
     usePlaybackActions();
   const load = useCallback(() => loadList(view, userId), [view, userId]);
   const { data, error, retry } = useTvLoader(load, "Couldn't load tracks");
@@ -226,10 +226,9 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
               track={track}
               index={i}
               showCover={view.type !== "album"}
-              onSelect={() => {
-                void playFromSource(track, data.tracks, { source, albumMode });
-                nav.showNowPlaying();
-              }}
+              onSelect={() =>
+                nav.playTrack(track, data.tracks, { source, albumMode })
+              }
             />
           ))}
         </div>

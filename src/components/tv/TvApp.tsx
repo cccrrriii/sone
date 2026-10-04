@@ -119,6 +119,7 @@ function Screen({ active, view }: { active: boolean; view: TvView }) {
       <div
         ref={ref}
         data-tv-remember
+        data-tv-scroll-root
         className={`tv-screen absolute inset-0 overflow-y-auto overflow-x-hidden ${
           active ? "" : "hidden"
         }`}
@@ -307,6 +308,18 @@ export default function TvApp() {
     }
   }, [stack]);
 
+  // Picking the track that is already playing just shows it rather than
+  // restarting it from the beginning.
+  const playTrack = useCallback<TvNav["playTrack"]>(
+    (track, tracks, options) => {
+      if (store.get(currentTrackAtom)?.id !== track.id) {
+        void playFromSource(track, tracks, options);
+      }
+      showNowPlaying();
+    },
+    [store, playFromSource, showNowPlaying],
+  );
+
   const run = useCallback<TvNav["run"]>(
     (action: TvAction, queue) => {
       switch (action.kind) {
@@ -318,7 +331,7 @@ export default function TvApp() {
           return;
         case "playTrack": {
           const tracks = queue?.tracks.length ? queue.tracks : [action.track];
-          void playFromSource(action.track, tracks, {
+          playTrack(action.track, tracks, {
             source: {
               type: "tv-row",
               id: queue?.id ?? action.track.id,
@@ -326,17 +339,16 @@ export default function TvApp() {
               allTracks: tracks,
             },
           });
-          showNowPlaying();
           return;
         }
       }
     },
-    [push, playMedia, playFromSource, showNowPlaying],
+    [push, playMedia, playTrack],
   );
 
   const nav = useMemo<TvNav>(
-    () => ({ push, back, run, showNowPlaying }),
-    [push, back, run, showNowPlaying],
+    () => ({ push, back, run, showNowPlaying, playTrack }),
+    [push, back, run, showNowPlaying, playTrack],
   );
 
   // The desktop "focus search" shortcut opens the Search screen here.
@@ -400,8 +412,11 @@ export default function TvApp() {
     return () => window.removeEventListener("keydown", onKey);
   }, [store, back, togglePlayPause, playNext, playPrevious]);
 
-  const rootType = stack[0].view.type;
+  // Now Playing opened on top of another screen still counts as being on
+  // Now Playing for the rail's highlight.
   const top = stack[stack.length - 1];
+  const rootType =
+    top.view.type === "nowPlaying" ? "nowPlaying" : stack[0].view.type;
 
   return (
     <TvNavContext.Provider value={nav}>
@@ -416,6 +431,7 @@ export default function TvApp() {
           <nav
             ref={railRef}
             data-tv-remember
+            data-tv-side
             aria-label="Main"
             className="tv-rail group overflow-hidden absolute inset-y-0 left-0 z-20 flex flex-col gap-[0.4rem] py-[2rem] px-[0.8rem] bg-th-sidebar"
           >
