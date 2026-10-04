@@ -137,7 +137,12 @@ function resolveRemembered(from: HTMLElement, target: HTMLElement) {
 
 export function focusElement(el: HTMLElement) {
   el.focus({ preventScroll: true });
-  el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  // Inside a `data-tv-scroll-top` block the whole block is brought into
+  // view from its top, not just the focused item — coming back up to the
+  // player from the queue below shows the full player again.
+  const block = el.closest<HTMLElement>("[data-tv-scroll-top]");
+  if (block) block.scrollIntoView({ block: "start", inline: "nearest" });
+  else el.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 /** Move focus one step within `scope`. Returns false when nothing lies in

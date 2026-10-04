@@ -165,7 +165,10 @@ export default function TvNowPlaying() {
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-th-base/60 to-th-base" />
       </div>
 
-      <div className="relative h-full flex items-center gap-[3.5rem] px-[4rem] py-[2.5rem]">
+      <div
+        data-tv-scroll-top
+        className="relative h-full flex items-center gap-[3.5rem] px-[4rem] py-[2.5rem]"
+      >
         <div
           className={`shrink-0 overflow-hidden rounded-[1rem] shadow-2xl bg-th-surface ${
             isVideo

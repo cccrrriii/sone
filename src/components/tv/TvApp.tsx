@@ -451,10 +451,7 @@ export default function TvApp() {
             </button>
           </nav>
 
-          <main
-            data-tv-remember
-            className="absolute inset-y-0 right-0 left-[4.5rem] bg-th-base"
-          >
+          <main data-tv-remember className="absolute inset-0 bg-th-base">
             {stack.map((e) => (
               <Screen key={e.id} view={e.view} active={e.id === top.id} />
             ))}
