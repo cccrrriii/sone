@@ -77,6 +77,7 @@ We went beyond the basics with direct-to-DAC bit-perfect ALSA output, a resizabl
 - **Lyrics** — synced lyrics display for supported tracks
 - **Miniplayer** — compact floating window with album art, playback controls, and resizable-adaptive layout
 - **Full-screen player** — maximized view with album art, lyrics option and auto-hiding controls
+- **TV mode** — a fullscreen 10-foot interface for a TV or media PC, driven entirely by arrow keys, Enter and Back (a remote, a gamepad mapped to keys, or a keyboard)
 - **Queue persistence** — picks up where you left off across restarts
 - **MPRIS integration** — media keys, shuffle, repeat, seek, and desktop widget support
 - **System tray** with playback controls and minimize-to-tray
@@ -431,6 +432,17 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 sone
 This is a known issue with NVIDIA's proprietary drivers and WebKitGTK hardware acceleration.
 
 </details>
+
+## TV mode
+
+For a media PC hooked up to a TV, SONE has a separate fullscreen interface built for the couch: large covers, a focus highlight you can see from across the room, and nothing that needs a mouse.
+
+- **Turn it on** from the user menu (**TV mode**) or **Settings → General → TV**. Choose **Exit TV mode** at the bottom of the side rail to go back.
+- **Start straight into it** with `sone --tv` (or `SONE_TV_MODE=1 sone`) — handy for an autostart entry. Running `sone --tv` while SONE is already open switches that window over.
+- **Controls:** arrow keys move the focus, **Enter** opens or plays, **Back / Escape / Backspace** goes back, **Space** or the media keys play/pause and skip. On the Now Playing screen, focus the progress bar and use **← / →** to seek 10 s.
+- **Screens:** Home feed, Search (on-screen keyboard, or just type on a keyboard), My Collection (playlists, albums, artists, mixes, My Tracks), album / playlist / mix / artist pages, and a Now Playing screen with the queue.
+
+The interface scales with the screen width, so it looks the same at 720p, 1080p and 4K. Most remotes that show up as a keyboard (IR receivers, HDMI-CEC adapters, Bluetooth remotes) work out of the box; if yours sends other keys, map them to the arrows, Enter and Escape.
 
 ## Custom theme file
 
