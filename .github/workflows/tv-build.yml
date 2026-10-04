@@ -32,7 +32,11 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
+          # The runner image preinstalls libunwind-14-dev, which blocks
+          # libgstreamer1.0-dev's libunwind-dev dependency unless it is
+          # requested explicitly (apt then swaps the two).
           sudo apt-get install --no-install-recommends -y \
+            libunwind-dev \
             build-essential \
             pkg-config \
             file \
