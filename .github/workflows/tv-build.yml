@@ -1,8 +1,10 @@
 name: TV build
 
-# Builds an installable SONE (AppImage + .deb) with TV mode and publishes it
-# as the "tv-build" pre-release, replacing the previous one, so the latest
-# build is always at the same download page.
+# Builds installable SONE packages with TV mode and attaches them to the
+# "tv-build" pre-release, replacing the previous files, so the latest build
+# is always on the same download page:
+#   - an Arch Linux package (built natively on Arch, uses the system's libs)
+#   - an AppImage and a .deb (built on Ubuntu 22.04)
 on:
   push:
     branches:
@@ -17,9 +19,85 @@ concurrency:
   group: tv-build
   cancel-in-progress: true
 
+env:
+  NOTES: >-
+    Arch Linux: download the .pkg.tar.zst and install it with
+    `sudo pacman -U <file>`. Ubuntu / Linux Mint / Debian: install the .deb.
+    Other distros: the .AppImage (make it executable, then double-click).
+    In SONE, open the user menu and choose **TV mode**, or start it with
+    `sone --tv`.
+
 jobs:
-  build:
-    name: Build AppImage and .deb
+  release:
+    name: Prepare release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Create or update the tv-build pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Built from ${GITHUB_SHA::7}. $NOTES"
+          if gh release view tv-build --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit tv-build --repo "$GITHUB_REPOSITORY" --notes "$notes"
+          else
+            gh release create tv-build --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "SONE with TV mode (latest build)" --notes "$notes"
+          fi
+
+  arch:
+    name: Arch Linux package
+    needs: release
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    timeout-minutes: 90
+    steps:
+      - name: Install system dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git github-cli pkgconf curl file \
+            webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg openssl dbus \
+            gstreamer gst-plugins-base gst-plugins-base-libs \
+            gst-plugins-good gst-plugins-bad gst-plugins-bad-libs gst-libav \
+            libsecret alsa-lib libpulse xdg-utils nodejs npm rustup
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build app
+        run: |
+          rustup default stable
+          npm install -g pnpm@11.1.3
+          pnpm install --frozen-lockfile
+          # Tauri cannot emit a pacman package; the PKGBUILD repackages the .deb.
+          pnpm tauri build --bundles deb
+
+      - name: Build pacman package
+        run: |
+          useradd -m builder
+          mkdir /pkg
+          cp build-scripts/build/PKGBUILD /pkg/
+          cp src-tauri/target/release/bundle/deb/SONE_*.deb /pkg/sone.deb
+          cd /pkg
+          # Own package name, so it can sit in place of an AUR/repo "sone".
+          sed -i 's/^pkgname=sone$/pkgname=sone-tv/' PKGBUILD
+          sed -i 's/^pkgdesc=.*/pkgdesc="Tidal desktop app (SONE) with TV mode"/' PKGBUILD
+          printf "provides=('sone')\nconflicts=('sone')\n" >> PKGBUILD
+          chown -R builder /pkg
+          su builder -c "makepkg --nodeps --noconfirm"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          gh release upload tv-build /pkg/*.pkg.tar.zst --clobber --repo "$GITHUB_REPOSITORY"
+
+  ubuntu:
+    name: AppImage and .deb
+    needs: release
     # 22.04 keeps the AppImage runnable on older distros (glibc 2.35).
     runs-on: ubuntu-22.04
     timeout-minutes: 90
@@ -85,20 +163,11 @@ jobs:
       - name: Build app
         run: pnpm tauri build --bundles appimage,deb
 
-      - name: Publish the tv-build pre-release
+      - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          shopt -s nullglob
-          files=(src-tauri/target/release/bundle/appimage/*.AppImage src-tauri/target/release/bundle/deb/*.deb)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "::error::No build output found"
-            exit 1
-          fi
-          gh release delete tv-build --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
-          gh release create tv-build "${files[@]}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --prerelease \
-            --title "SONE with TV mode (latest build)" \
-            --notes "Built from ${GITHUB_SHA::7}. The .AppImage runs on any Linux distro: make it executable and double-click it. The .deb is for Ubuntu, Linux Mint and Debian. In SONE, open the user menu and choose **TV mode**, or start it with \`--tv\`."
+          gh release upload tv-build \
+            src-tauri/target/release/bundle/appimage/*.AppImage \
+            src-tauri/target/release/bundle/deb/*.deb \
+            --clobber --repo "$GITHUB_REPOSITORY"
