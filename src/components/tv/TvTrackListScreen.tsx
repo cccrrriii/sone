@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useAtomValue } from "jotai";
-import { Play, Shuffle } from "lucide-react";
+import { Heart, MoreHorizontal, Play, Shuffle } from "lucide-react";
 import {
   getAlbumPage,
   getFavoriteTracks,
@@ -10,8 +10,9 @@ import {
 } from "../../api/tidal";
 import { authTokensAtom } from "../../atoms/auth";
 import { usePlaybackActions } from "../../hooks/usePlaybackActions";
+import { useFavorites } from "../../hooks/useFavorites";
 import { isTrackUnavailable } from "../../lib/trackAvailability";
-import type { Track } from "../../types";
+import type { MediaItemType, Track } from "../../types";
 import { getTidalImageUrl } from "../../types";
 import {
   formatTotalDuration,
@@ -139,6 +140,7 @@ function sourceId(view: ListView): string | number {
 export default function TvTrackListScreen({ view }: { view: ListView }) {
   const nav = useTvNav();
   const userId = useAtomValue(authTokensAtom)?.user_id;
+  const fav = useFavorites();
   const { playAllFromSource, setShuffledQueue, playTrack } =
     usePlaybackActions();
   const load = useCallback(() => loadList(view, userId), [view, userId]);
@@ -157,6 +159,59 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
     allTracks: data.tracks,
   };
   const albumMode = view.type === "album";
+  const media: MediaItemType | null =
+    view.type === "album"
+      ? { type: "album", id: view.id, title: data.title, cover: data.image }
+      : view.type === "playlist"
+        ? {
+            type: "playlist",
+            uuid: view.uuid,
+            title: data.title,
+            image: data.image,
+          }
+        : view.type === "mix"
+          ? {
+              type: "mix",
+              mixId: view.mixId,
+              title: data.title,
+              image: data.image,
+            }
+          : null;
+  const liked =
+    view.type === "album"
+      ? fav.favoriteAlbumIds.has(view.id)
+      : view.type === "playlist"
+        ? fav.favoritePlaylistUuids.has(view.uuid)
+        : view.type === "mix"
+          ? fav.favoriteMixIds.has(view.mixId)
+          : false;
+  const toggleLike = () => {
+    const run =
+      view.type === "album"
+        ? liked
+          ? fav.removeFavoriteAlbum(view.id)
+          : fav.addFavoriteAlbum(view.id)
+        : view.type === "playlist"
+          ? liked
+            ? fav.removeFavoritePlaylist(view.uuid)
+            : fav.addFavoritePlaylist(view.uuid)
+          : view.type === "mix"
+            ? liked
+              ? fav.removeFavoriteMix(view.mixId)
+              : fav.addFavoriteMix(view.mixId, {
+                  id: view.mixId,
+                  title: data.title,
+                  subTitle: data.subtitle ?? "",
+                  images: data.image
+                    ? {
+                        SMALL: { url: data.image },
+                        MEDIUM: { url: data.image },
+                      }
+                    : undefined,
+                })
+            : null;
+    run?.catch(() => {});
+  };
   const totalSecs = data.tracks.reduce((s, t) => s + (t.duration ?? 0), 0);
 
   // Same as the desktop pages: Play follows the shuffle setting, Shuffle is
@@ -200,6 +255,26 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
           label="Shuffle"
           onClick={shufflePlay}
         />
+        {media && (
+          <TvButton
+            title={liked ? "Remove from collection" : "Add to collection"}
+            active={liked}
+            icon={
+              <Heart
+                className="w-[1rem] h-[1rem]"
+                fill={liked ? "currentColor" : "none"}
+              />
+            }
+            onClick={toggleLike}
+          />
+        )}
+        {media && (
+          <TvButton
+            title="More options"
+            icon={<MoreHorizontal className="w-[1rem] h-[1rem]" />}
+            onClick={() => nav.openMenu(nav.mediaMenu(media))}
+          />
+        )}
         {data.artist && (
           <TvButton
             label={data.artist.name}

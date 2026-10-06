@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect } from "react";
 import { focusFirstIn } from "../../lib/spatialNav";
-import type { Track } from "../../types";
+import type { MediaItemType, Track } from "../../types";
 import type { usePlaybackActions } from "../../hooks/usePlaybackActions";
 import type { TvAction, TvView } from "./tvItems";
+import type { TvMenuSpec } from "./tvMenu";
 
 export interface TvNav {
   /** Open a screen on top of the current one; Back returns to it. */
@@ -19,6 +20,13 @@ export interface TvNav {
       ReturnType<typeof usePlaybackActions>["playFromSource"]
     >[2],
   ) => void;
+  /** Open the action menu (the TV's right-click menu). */
+  openMenu: (spec: TvMenuSpec) => void;
+  /** Action menus for a track and for an album / playlist / mix / artist. */
+  trackMenu: (track: Track) => TvMenuSpec;
+  mediaMenu: (item: MediaItemType) => TvMenuSpec;
+  /** Open the full desktop settings sheet, navigable with the remote. */
+  openMoreSettings: () => void;
   /** Carry out a card's action. `queue` is the row it sits in, so playing a
    *  track keeps the rest of that row queued behind it. */
   run: (

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useAtomValue } from "jotai";
-import { AudioLines, Heart } from "lucide-react";
+import { AudioLines, Heart, MoreHorizontal } from "lucide-react";
 import TidalImage from "../TidalImage";
 import { currentTrackAtom, isPlayingAtom } from "../../atoms/playback";
 import { formatTime } from "../../lib/format";
@@ -10,19 +10,25 @@ import { getTidalImageUrl } from "../../types";
 import { getTrackArtistDisplay, trackCoverId } from "../../utils/itemHelpers";
 import { useTvNav } from "./TvNavContext";
 import type { TvEntry } from "./tvItems";
+import { tvMenuRef, type TvMenuSpec } from "./tvMenu";
 
 function TvCard({
   entry,
   onSelect,
   wide,
+  menu,
 }: {
   entry: TvEntry;
   onSelect: () => void;
   wide?: boolean;
+  /** Action menu, opened by holding Enter or the Menu key. */
+  menu?: () => TvMenuSpec;
 }) {
   return (
     <button
       data-tv-focusable
+      data-tv-has-menu={menu ? true : undefined}
+      ref={menu ? tvMenuRef(menu) : undefined}
       onClick={onSelect}
       className={`tv-card shrink-0 text-left ${wide ? "w-[15rem]" : "w-[9.5rem]"}`}
     >
@@ -90,6 +96,17 @@ export function TvRow({
             key={entry.key}
             entry={entry}
             wide={wide}
+            menu={
+              entry.action.kind === "playTrack"
+                ? () =>
+                    nav.trackMenu(
+                      (entry.action as { kind: "playTrack"; track: Track })
+                        .track,
+                    )
+                : entry.media
+                  ? () => nav.mediaMenu(entry.media!)
+                  : undefined
+            }
             onSelect={() =>
               nav.run(entry.action, {
                 tracks: queueTracks ?? [],
@@ -155,61 +172,76 @@ export function TvTrackRow({
   showCover?: boolean;
   onSelect: () => void;
 }) {
+  const nav = useTvNav();
   const current = useAtomValue(currentTrackAtom);
   const playing = useAtomValue(isPlayingAtom);
   const isCurrent = current?.id === track.id;
   const unavailable = isTrackUnavailable(track);
+  const menu = () => nav.trackMenu(track);
   return (
-    <button
-      data-tv-focusable
-      onClick={onSelect}
-      className={`tv-track w-full flex items-center gap-[1rem] px-[1rem] py-[0.45rem] rounded-[0.6rem] text-left ${
-        unavailable ? "opacity-40" : ""
-      }`}
-    >
-      <span className="w-[1.6rem] shrink-0 text-right text-[0.75rem] text-th-text-muted tabular-nums">
-        {isCurrent ? (
-          <AudioLines
-            className={`inline text-th-accent w-[1rem] h-[1rem] ${playing ? "animate-pulse" : ""}`}
+    <div className="tv-track-row flex items-center gap-[0.4rem]">
+      <button
+        data-tv-focusable
+        data-tv-has-menu
+        ref={tvMenuRef(menu)}
+        onClick={onSelect}
+        className={`tv-track flex-1 min-w-0 flex items-center gap-[1rem] px-[1rem] py-[0.45rem] rounded-[0.6rem] text-left ${
+          unavailable ? "opacity-40" : ""
+        }`}
+      >
+        <span className="w-[1.6rem] shrink-0 text-right text-[0.75rem] text-th-text-muted tabular-nums">
+          {isCurrent ? (
+            <AudioLines
+              className={`inline text-th-accent w-[1rem] h-[1rem] ${playing ? "animate-pulse" : ""}`}
+            />
+          ) : (
+            index + 1
+          )}
+        </span>
+        {showCover && (
+          <TidalImage
+            src={getTidalImageUrl(trackCoverId(track), 160) || undefined}
+            alt=""
+            className="w-[2.4rem] h-[2.4rem] rounded-[0.3rem] overflow-hidden shrink-0"
           />
-        ) : (
-          index + 1
         )}
-      </span>
-      {showCover && (
-        <TidalImage
-          src={getTidalImageUrl(trackCoverId(track), 160) || undefined}
-          alt=""
-          className="w-[2.4rem] h-[2.4rem] rounded-[0.3rem] overflow-hidden shrink-0"
-        />
-      )}
-      <span className="flex-1 min-w-0">
-        <span
-          className={`block truncate text-[0.8rem] font-semibold ${
-            isCurrent ? "text-th-accent" : "text-th-text-primary"
-          }`}
-        >
-          {track.title}
-          {track.version && (
-            <span className="text-th-text-muted font-normal">
-              {" "}
-              ({track.version})
-            </span>
-          )}
+        <span className="flex-1 min-w-0">
+          <span
+            className={`block truncate text-[0.8rem] font-semibold ${
+              isCurrent ? "text-th-accent" : "text-th-text-primary"
+            }`}
+          >
+            {track.title}
+            {track.version && (
+              <span className="text-th-text-muted font-normal">
+                {" "}
+                ({track.version})
+              </span>
+            )}
+          </span>
+          <span className="block truncate text-[0.65rem] text-th-text-muted">
+            {track.explicit && (
+              <span className="inline-block mr-[0.4rem] px-[0.25rem] rounded-[0.15rem] bg-th-button text-[0.55rem] font-bold leading-[1.2]">
+                E
+              </span>
+            )}
+            {getTrackArtistDisplay(track)}
+          </span>
         </span>
-        <span className="block truncate text-[0.65rem] text-th-text-muted">
-          {track.explicit && (
-            <span className="inline-block mr-[0.4rem] px-[0.25rem] rounded-[0.15rem] bg-th-button text-[0.55rem] font-bold leading-[1.2]">
-              E
-            </span>
-          )}
-          {getTrackArtistDisplay(track)}
+        <span className="shrink-0 text-[0.7rem] text-th-text-muted tabular-nums">
+          {track.duration ? formatTime(track.duration) : ""}
         </span>
-      </span>
-      <span className="shrink-0 text-[0.7rem] text-th-text-muted tabular-nums">
-        {track.duration ? formatTime(track.duration) : ""}
-      </span>
-    </button>
+      </button>
+      <button
+        data-tv-focusable
+        aria-label="More options"
+        title="More options"
+        onClick={() => nav.openMenu(menu())}
+        className="tv-track shrink-0 w-[2.4rem] h-[2.4rem] flex items-center justify-center rounded-full text-th-text-muted"
+      >
+        <MoreHorizontal className="w-[1.2rem] h-[1.2rem]" />
+      </button>
+    </div>
   );
 }
 

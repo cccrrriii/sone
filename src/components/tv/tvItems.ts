@@ -14,6 +14,7 @@ import {
 /** A screen of the TV interface. The first four are the rail's roots. */
 export type TvView =
   | { type: "home" }
+  | { type: "settings" }
   | { type: "search" }
   | { type: "collection" }
   | { type: "nowPlaying" }
@@ -36,11 +37,13 @@ export interface TvEntry {
   round?: boolean;
   /** Drawn in place of artwork when the entry has none (My Tracks). */
   icon?: "heart";
+  /** What the action menu acts on, for cards that have one. */
+  media?: MediaItemType;
   action: TvAction;
 }
 
 /** The view a media item opens, or a play action for a video. */
-function actionForMedia(item: MediaItemType): TvAction {
+export function actionForMedia(item: MediaItemType): TvAction {
   switch (item.type) {
     case "album":
       return {
@@ -119,6 +122,7 @@ function toTvEntry(item: any, sectionType?: string): TvEntry | null {
       case "PLAYLIST":
         return {
           ...base,
+          media: { type: "playlist", uuid: id, title: promoTitle },
           action: {
             kind: "open",
             view: { type: "playlist", uuid: id, title: promoTitle },
@@ -127,6 +131,7 @@ function toTvEntry(item: any, sectionType?: string): TvEntry | null {
       case "ALBUM":
         return {
           ...base,
+          media: { type: "album", id: Number(id), title: promoTitle },
           action: {
             kind: "open",
             view: { type: "album", id: Number(id), title: promoTitle },
@@ -135,24 +140,25 @@ function toTvEntry(item: any, sectionType?: string): TvEntry | null {
       case "ARTIST":
         return {
           ...base,
+          media: { type: "artist", id: Number(id), name: promoTitle },
           action: {
             kind: "open",
             view: { type: "artist", id: Number(id), name: promoTitle },
           },
         };
-      case "VIDEO":
+      case "VIDEO": {
+        const video = {
+          type: "video" as const,
+          id: Number(id),
+          title: promoTitle,
+          imageId: item.imageId,
+        };
         return {
           ...base,
-          action: {
-            kind: "playVideo",
-            item: {
-              type: "video",
-              id: Number(id),
-              title: promoTitle,
-              imageId: item.imageId,
-            },
-          },
+          media: video,
+          action: { kind: "playVideo", item: video },
         };
+      }
       default:
         return null;
     }
@@ -166,6 +172,7 @@ function toTvEntry(item: any, sectionType?: string): TvEntry | null {
       subtitle,
       image: getItemImage(item, 640),
       round: media.type === "artist",
+      media,
       action: actionForMedia(media),
     };
   }

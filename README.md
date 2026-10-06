@@ -447,8 +447,9 @@ For a media PC hooked up to a TV, SONE has a separate fullscreen interface built
 
 - **Turn it on** from the user menu (**TV mode**) or **Settings → General → TV**. Choose **Exit TV mode** at the bottom of the side rail to go back.
 - **Start straight into it** with `sone --tv` (or `SONE_TV_MODE=1 sone`) — handy for an autostart entry. Running `sone --tv` while SONE is already open switches that window over.
-- **Controls:** arrow keys move the focus, **Enter** opens or plays, **Back / Escape / Backspace** goes back, **Space** or the media keys play/pause and skip. On the Now Playing screen, focus the progress bar and use **← / →** to seek 10 s.
-- **Screens:** Home feed, Search (on-screen keyboard, or just type on a keyboard), My Collection (playlists, albums, artists, mixes, My Tracks), album / playlist / mix / artist pages, and a Now Playing screen with the queue.
+- **Controls:** arrow keys move the focus, **Enter** opens or plays, **Back / Escape / Backspace** goes back, **Space** or the media keys play/pause and skip. On the Now Playing screen, focus the progress bar and use **← / →** to seek 10 s, or the volume bar to change the volume (**Enter** mutes).
+- **Action menu:** hold **Enter** (or press the **Menu** key) on a track, album, playlist, mix or artist — or pick the **⋯** button — to play next, add to the queue or a playlist, like, start a track radio or jump to the album/artist.
+- **Screens:** Home feed, Search (on-screen keyboard, or just type on a keyboard), My Collection (playlists, albums, artists, mixes, My Tracks), album / playlist / mix / artist pages, a Now Playing screen with lyrics and the queue, and Settings (audio quality, exclusive / bit-perfect output and device, playback options, themes). **More settings** opens the full desktop settings, navigable with the arrow keys.
 
 The interface scales with the screen width, so it looks the same at 720p, 1080p and 4K. Most remotes that show up as a keyboard (IR receivers, HDMI-CEC adapters, Bluetooth remotes) work out of the box; if yours sends other keys, map them to the arrows, Enter and Escape.
 

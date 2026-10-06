@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
-import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
 import {
   ChevronDown,
   Heart,
   Mic2,
+  MoreHorizontal,
+  Volume1,
+  Volume2,
+  VolumeX,
   Pause,
   Play,
   Repeat,
@@ -22,6 +26,9 @@ import {
   repeatAtom,
   shuffleAtom,
   streamInfoAtom,
+  volumeAtom,
+  preMuteVolumeAtom,
+  bitPerfectAtom,
 } from "../../atoms/playback";
 import { currentVideoAtom, videoExpandedAtom } from "../../atoms/video";
 import { tvLyricsAtom } from "../../atoms/tv";
@@ -51,6 +58,76 @@ function usePosition(): number {
     return () => clearInterval(id);
   }, []);
   return pos;
+}
+
+const VOLUME_STEP = 0.05;
+
+/** Volume bar: Left/Right change it in 5% steps, Enter mutes. Locked while
+ *  bit-perfect output is on, since the DAC must get unscaled samples. */
+function VolumeControl() {
+  const volume = useAtomValue(volumeAtom);
+  const bitPerfect = useAtomValue(bitPerfectAtom);
+  const store = useStore();
+  const { setVolume } = usePlaybackActions();
+  const pct = Math.round(volume * 100);
+  const Icon = volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
+
+  if (bitPerfect) {
+    return (
+      <span className="inline-flex items-center gap-[0.5rem] text-[0.7rem] text-th-text-muted">
+        <Volume2 className="w-[1.1rem] h-[1.1rem]" />
+        Volume fixed (bit-perfect)
+      </span>
+    );
+  }
+
+  const toggleMute = () => {
+    if (volume > 0) {
+      store.set(preMuteVolumeAtom, volume);
+      void setVolume(0);
+    } else {
+      void setVolume(store.get(preMuteVolumeAtom) || 0.5);
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      const delta = e.key === "ArrowLeft" ? -VOLUME_STEP : VOLUME_STEP;
+      void setVolume(
+        Math.round(Math.max(0, Math.min(1, volume + delta)) * 100) / 100,
+      );
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      toggleMute();
+    }
+  };
+
+  return (
+    <div
+      data-tv-focusable
+      tabIndex={0}
+      role="slider"
+      aria-label="Volume"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+      onKeyDown={onKeyDown}
+      onClick={toggleMute}
+      className="tv-progress inline-flex items-center gap-[0.6rem] h-[2.6rem] px-[0.9rem] rounded-full bg-th-button outline-none"
+    >
+      <Icon className="w-[1.1rem] h-[1.1rem] text-th-text-primary shrink-0" />
+      <span className="relative w-[7rem] h-[0.3rem] rounded-full bg-th-slider-track">
+        <span
+          className="absolute inset-y-0 left-0 rounded-full bg-th-accent"
+          style={{ width: `${pct}%` }}
+        />
+      </span>
+      <span className="w-[2.2rem] text-right text-[0.7rem] text-th-text-secondary tabular-nums">
+        {pct}%
+      </span>
+    </div>
+  );
 }
 
 function Progress({
@@ -332,6 +409,15 @@ export default function TvNowPlaying() {
                 }
               />
             )}
+            <TvButton
+              title="More options"
+              icon={<MoreHorizontal className={icon} />}
+              onClick={() => nav.openMenu(nav.trackMenu(track))}
+            />
+          </div>
+
+          <div className="mt-[1rem] flex items-center">
+            <VolumeControl />
           </div>
         </div>
 

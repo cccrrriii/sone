@@ -101,3 +101,15 @@ html.tv-mode {
   background: var(--th-hl-med);
   color: var(--th-text-primary);
 }
+
+/* The desktop settings sheet opened from TV mode: give its controls the
+   same visible focus ring as the TV screens. */
+.tv-mode [data-tv-native] :focus {
+  outline: 2px solid var(--th-accent);
+  outline-offset: 2px;
+}
+
+/* Toasts are sized in px for the desktop; scale them up on a TV. */
+.tv-mode .sone-toasts {
+  zoom: var(--tv-px-scale, 1);
+}

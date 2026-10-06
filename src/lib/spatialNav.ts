@@ -18,7 +18,10 @@ export interface Box {
   bottom: number;
 }
 
-const FOCUSABLE = "[data-tv-focusable]";
+// Inside a `data-tv-native` container (the desktop settings sheet shown in
+// TV mode) every natively focusable control counts, without markup changes.
+const FOCUSABLE =
+  "[data-tv-focusable], [data-tv-native] :is(button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1']))";
 const REMEMBER = "[data-tv-remember]";
 const SIDE = "[data-tv-side]";
 

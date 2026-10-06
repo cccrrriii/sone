@@ -17,10 +17,12 @@ import {
   Pause,
   Play,
   Search,
+  Settings,
 } from "lucide-react";
 import TidalImage from "../TidalImage";
 import VideoPlayer from "../VideoPlayer";
 import ProxyNoticeBanner from "../ProxyNoticeBanner";
+import SettingsSheet from "../settings/SettingsSheet";
 import { tvModeAtom } from "../../atoms/tv";
 import { currentTrackAtom, isPlayingAtom } from "../../atoms/playback";
 import {
@@ -48,16 +50,26 @@ import TvCollection from "./TvCollection";
 import TvNowPlaying from "./TvNowPlaying";
 import TvTrackListScreen from "./TvTrackListScreen";
 import TvArtistScreen from "./TvArtistScreen";
+import TvSettings from "./TvSettings";
+import TvMenuHost, { type TvMenuHostHandle } from "./TvMenuHost";
+import { menuForElement } from "./tvMenu";
 import "./tv.css";
 
-type RootType = "home" | "search" | "collection" | "nowPlaying";
+type RootType = "home" | "search" | "collection" | "nowPlaying" | "settings";
 
 const RAIL: { type: RootType; label: string; icon: typeof Home }[] = [
   { type: "home", label: "Home", icon: Home },
   { type: "search", label: "Search", icon: Search },
   { type: "collection", label: "My Collection", icon: Library },
   { type: "nowPlaying", label: "Now Playing", icon: Disc3 },
+  { type: "settings", label: "Settings", icon: Settings },
 ];
+
+const ROOTS = new Set<string>(RAIL.map((r) => r.type));
+
+/** How long Enter must be held to open the action menu instead of
+ *  activating the focused item. */
+const LONG_PRESS_MS = 550;
 
 const ARROWS: Record<string, Direction> = {
   ArrowUp: "up",
@@ -100,6 +112,8 @@ function renderScreen(view: TvView): ReactNode {
       return <TvCollection />;
     case "nowPlaying":
       return <TvNowPlaying />;
+    case "settings":
+      return <TvSettings />;
     case "artist":
       return <TvArtistScreen view={view} />;
     case "album":
@@ -163,6 +177,38 @@ function MiniBar({ onOpen }: { onOpen: () => void }) {
 }
 
 /**
+ * The desktop settings sheet inside TV mode, for the settings that have no
+ * TV screen of their own. Scaled up to TV size, and marked native so every
+ * control in it is reachable with the arrow keys.
+ */
+function MoreSettings({ onClose }: { onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [zoom] = useState(() => {
+    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    // The sheet is at most 800x740 CSS px; keep it on screen.
+    return Math.max(
+      1,
+      Math.min(
+        rem / 16,
+        (window.innerHeight * 0.94) / 740,
+        (window.innerWidth * 0.95) / 800,
+      ),
+    );
+  });
+  useLayoutEffect(() => {
+    const id = requestAnimationFrame(() => {
+      if (ref.current) focusFirstIn(ref.current);
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
+  return (
+    <div ref={ref} data-tv-modal data-tv-native style={{ zoom }}>
+      <SettingsSheet open onClose={onClose} />
+    </div>
+  );
+}
+
+/**
  * The 10-foot interface: every screen is driven by arrows, Enter and Back, so
  * it works from a remote, a gamepad mapped to keys, or a keyboard. Replaces
  * the desktop Layout while TV mode is on; playback, MPRIS and the rest of the
@@ -195,8 +241,20 @@ export default function TvApp() {
 
   // Scale the whole UI with the screen (rem-based sizes) and go fullscreen.
   useLayoutEffect(() => {
-    document.documentElement.classList.add("tv-mode");
-    return () => document.documentElement.classList.remove("tv-mode");
+    const html = document.documentElement;
+    html.classList.add("tv-mode");
+    // Pixel-sized desktop pieces shown in TV mode (toasts) scale by this.
+    const updateScale = () => {
+      const rem = parseFloat(getComputedStyle(html).fontSize);
+      html.style.setProperty("--tv-px-scale", String(Math.max(1, rem / 16)));
+    };
+    updateScale();
+    window.addEventListener("resize", updateScale);
+    return () => {
+      window.removeEventListener("resize", updateScale);
+      html.classList.remove("tv-mode");
+      html.style.removeProperty("--tv-px-scale");
+    };
   }, []);
   useEffect(() => {
     const win = getCurrentWindow();
@@ -251,13 +309,8 @@ export default function TvApp() {
 
   const push = useCallback(
     (view: TvView) => {
-      if (
-        view.type === "home" ||
-        view.type === "search" ||
-        view.type === "collection" ||
-        view.type === "nowPlaying"
-      ) {
-        goTo(view.type);
+      if (ROOTS.has(view.type)) {
+        goTo(view.type as RootType);
         return;
       }
       stackPush(view);
@@ -346,9 +399,40 @@ export default function TvApp() {
     [push, playMedia, playTrack],
   );
 
+  const menuRef = useRef<TvMenuHostHandle>(null);
+  const [moreSettings, setMoreSettings] = useState(false);
+  const moreSettingsReturn = useRef<HTMLElement | null>(null);
+
+  const moreSettingsOpenRef = useRef(false);
+  useLayoutEffect(() => {
+    moreSettingsOpenRef.current = moreSettings;
+  }, [moreSettings]);
+
+  const openMoreSettings = useCallback(() => {
+    const active = document.activeElement;
+    moreSettingsReturn.current = active instanceof HTMLElement ? active : null;
+    setMoreSettings(true);
+  }, []);
+  const closeMoreSettings = useCallback(() => {
+    setMoreSettings(false);
+    const el = moreSettingsReturn.current;
+    moreSettingsReturn.current = null;
+    if (el?.isConnected) requestAnimationFrame(() => focusElement(el));
+  }, []);
+
   const nav = useMemo<TvNav>(
-    () => ({ push, back, run, showNowPlaying, playTrack }),
-    [push, back, run, showNowPlaying, playTrack],
+    () => ({
+      push,
+      back,
+      run,
+      showNowPlaying,
+      playTrack,
+      openMenu: (spec) => menuRef.current?.open(spec),
+      trackMenu: (track) => menuRef.current!.trackMenu(track),
+      mediaMenu: (item) => menuRef.current!.mediaMenu(item),
+      openMoreSettings,
+    }),
+    [push, back, run, showNowPlaying, playTrack, openMoreSettings],
   );
 
   // The desktop "focus search" shortcut opens the Search screen here.
@@ -359,6 +443,16 @@ export default function TvApp() {
   }, [goTo]);
 
   useEffect(() => {
+    // Long-pressing Enter on an item that has an action menu opens the
+    // menu; a short press activates the item as usual.
+    let held: { el: HTMLElement; timer: number; fired: boolean } | null = null;
+
+    const openMenuFor = (el: Element | null) => {
+      const build = menuForElement(el);
+      if (build) menuRef.current?.open(build());
+      return !!build;
+    };
+
     const onKey = (e: KeyboardEvent) => {
       // An element (the seek bar) or the Escape dismiss stack handled it.
       if (e.defaultPrevented) return;
@@ -387,7 +481,31 @@ export default function TvApp() {
           e.preventDefault();
           void playPrevious();
           return;
+        case "ContextMenu":
+          e.preventDefault();
+          openMenuFor(document.activeElement);
+          return;
+        case "Enter": {
+          const target = document.activeElement as HTMLElement | null;
+          if (!target || !menuForElement(target)) return;
+          e.preventDefault();
+          if (e.repeat || held) return;
+          held = {
+            el: target,
+            fired: false,
+            timer: window.setTimeout(() => {
+              if (!held) return;
+              held.fired = true;
+              openMenuFor(held.el);
+            }, LONG_PRESS_MS),
+          };
+          return;
+        }
       }
+
+      // A modal (the action menu, the settings sheet) keeps focus to itself.
+      const modals = document.querySelectorAll<HTMLElement>("[data-tv-modal]");
+      const scope = modals[modals.length - 1] ?? rootRef.current;
 
       const dir = ARROWS[e.key];
       if (dir) {
@@ -395,7 +513,7 @@ export default function TvApp() {
           return;
         }
         e.preventDefault();
-        if (rootRef.current) moveFocus(rootRef.current, dir);
+        if (scope) moveFocus(scope, dir);
         return;
       }
 
@@ -405,12 +523,28 @@ export default function TvApp() {
       ) {
         e.preventDefault();
         if (isTextField(e.target)) e.target.blur();
-        back();
+        if (menuRef.current?.isOpen()) menuRef.current.back();
+        else if (moreSettingsOpenRef.current) closeMoreSettings();
+        else back();
       }
     };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || !held) return;
+      const { el, timer, fired } = held;
+      held = null;
+      window.clearTimeout(timer);
+      if (!fired) el.click();
+    };
+
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [store, back, togglePlayPause, playNext, playPrevious]);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+      if (held) window.clearTimeout(held.timer);
+    };
+  }, [store, back, togglePlayPause, playNext, playPrevious, closeMoreSettings]);
 
   // Now Playing opened on top of another screen still counts as being on
   // Now Playing for the rail's highlight.
@@ -477,6 +611,8 @@ export default function TvApp() {
           <MiniBar onOpen={() => goTo("nowPlaying")} />
         )}
       </div>
+      <TvMenuHost ref={menuRef} onNavigate={push} onPlayed={showNowPlaying} />
+      {moreSettings && <MoreSettings onClose={closeMoreSettings} />}
       {currentVideo && <VideoPlayer />}
     </TvNavContext.Provider>
   );
