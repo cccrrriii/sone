@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useAtomValue } from "jotai";
-import { AudioLines, Heart, MoreHorizontal } from "lucide-react";
+import { Heart, MoreHorizontal } from "lucide-react";
 import TidalImage from "../TidalImage";
 import { currentTrackAtom, isPlayingAtom } from "../../atoms/playback";
 import { formatTime } from "../../lib/format";
@@ -161,6 +161,24 @@ export function TvButton({
   );
 }
 
+/** The bouncing bars the desktop shows on the playing track (same
+ *  transform-only animation, so it stays cheap to draw); still while paused. */
+function PlayingBars({ playing }: { playing: boolean }) {
+  return (
+    <span className="inline-flex items-end justify-end gap-[0.12rem] h-[0.9rem]">
+      {[0, 0.2, 0.4].map((delay) => (
+        <span
+          key={delay}
+          className={`w-[0.14rem] h-full rounded-full bg-th-accent ${
+            playing ? "playing-bar" : "scale-y-50"
+          }`}
+          style={playing ? { animationDelay: `${delay}s` } : undefined}
+        />
+      ))}
+    </span>
+  );
+}
+
 export function TvTrackRow({
   track,
   index,
@@ -194,13 +212,7 @@ export function TvTrackRow({
         }`}
       >
         <span className="w-[1.6rem] shrink-0 text-right text-[0.75rem] text-th-text-muted tabular-nums">
-          {isCurrent ? (
-            <AudioLines
-              className={`inline w-[1rem] h-[1rem] ${playing ? "text-th-accent" : "text-th-text-muted"}`}
-            />
-          ) : (
-            index + 1
-          )}
+          {isCurrent ? <PlayingBars playing={playing} /> : index + 1}
         </span>
         {showCover && (
           <TidalImage

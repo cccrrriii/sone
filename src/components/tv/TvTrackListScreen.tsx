@@ -25,6 +25,10 @@ import { TvButton, TvError, TvSpinner, TvTrackRow } from "./TvParts";
 import type { TvView } from "./tvItems";
 import { useTvLoader } from "./useTvLoader";
 
+/** Cover side in the left column: its full width, unless the text and
+ *  buttons below (about 15rem) would then no longer fit under it. */
+const COVER_SIZE = "min(100cqw, 100cqh - 15rem)";
+
 type ListView = Extract<
   TvView,
   { type: "album" | "playlist" | "mix" | "favorites" }
@@ -262,9 +266,13 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
       <aside
         data-tv-side
         data-tv-remember
-        className="w-[24rem] shrink-0 h-full overflow-hidden flex flex-col justify-center pl-[3rem] pr-[1.5rem] py-[2.5rem]"
+        className="w-[32rem] shrink-0 h-full overflow-hidden flex flex-col justify-center pl-[3rem] pr-[1.5rem] py-[1.5rem]"
+        style={{ containerType: "size" }}
       >
-        <div className="w-full aspect-square shrink-0 overflow-hidden rounded-[0.8rem] bg-th-surface shadow-2xl">
+        <div
+          className="aspect-square shrink-0 overflow-hidden rounded-[0.8rem] bg-th-surface shadow-2xl"
+          style={{ width: COVER_SIZE }}
+        >
           <TidalImage
             src={data.image || undefined}
             alt={data.title}
@@ -277,7 +285,7 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
             {data.kicker}
           </p>
         )}
-        <h1 className="text-[1.8rem] font-extrabold leading-tight text-th-text-primary line-clamp-3">
+        <h1 className="text-[1.8rem] font-extrabold leading-tight text-th-text-primary line-clamp-2">
           {data.title}
         </h1>
         {subtitle && (
@@ -287,7 +295,10 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
         )}
         {/* Play and Shuffle share the first line, the smaller actions the
             second, so nothing wraps awkwardly in the narrow column. */}
-        <div className="mt-[1.2rem] grid grid-cols-2 gap-[0.7rem]">
+        <div
+          className="mt-[1.2rem] grid grid-cols-2 gap-[0.7rem]"
+          style={{ width: COVER_SIZE }}
+        >
           <TvButton
             primary
             autoFocus
