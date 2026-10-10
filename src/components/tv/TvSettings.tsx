@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
-import { Check, LogOut, SlidersHorizontal } from "lucide-react";
+import { Check, LogOut, SlidersHorizontal, X } from "lucide-react";
 import {
   allowExplicitAtom,
   autoplayAtom,
@@ -24,6 +24,7 @@ import { themeAtom } from "../../atoms/theme";
 import { tvLyricsAtom, tvModeAtom } from "../../atoms/tv";
 import { useToast } from "../../contexts/ToastContext";
 import { usePlaybackActions } from "../../hooks/usePlaybackActions";
+import { useAuth } from "../../hooks/useAuth";
 import { PRESET_THEMES } from "../../lib/theme";
 import { useTvInitialFocus, useTvNav } from "./TvNavContext";
 
@@ -137,6 +138,7 @@ export default function TvSettings() {
   const [theme, setTheme] = useAtom(themeAtom);
   const [lyricsOn, setLyricsOn] = useAtom(tvLyricsAtom);
   const setTvMode = useSetAtom(tvModeAtom);
+  const { userName, logout } = useAuth();
   const [gaplessSupported, setGaplessSupported] = useState(false);
   const [devices, setDevices] = useState<{ id: string; name: string }[]>([]);
 
@@ -340,6 +342,26 @@ export default function TvSettings() {
             );
           })}
         </div>
+      </Section>
+
+      <Section title="Account">
+        <Row
+          title={userName ? `Signed in as ${userName}` : "Signed in"}
+          subtitle="Log out of TIDAL on this device"
+          value={
+            <LogOut className="w-[1.1rem] h-[1.1rem] text-th-text-muted" />
+          }
+          onSelect={() =>
+            nav.openMenu({
+              title: "Log out?",
+              subtitle: "You can sign in again with a QR code.",
+              items: [
+                { label: "Log out", icon: LogOut, onSelect: () => logout() },
+                { label: "Cancel", icon: X, onSelect: () => {} },
+              ],
+            })
+          }
+        />
       </Section>
 
       <Section title="TV mode">

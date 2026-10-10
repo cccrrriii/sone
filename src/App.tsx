@@ -33,6 +33,7 @@ import { ToastProvider } from "./contexts/ToastContext";
 import { useTheme } from "./hooks/useTheme";
 import { useZoom } from "./hooks/useZoom";
 import { useTvLaunch } from "./hooks/useTvLaunch";
+import TvLogin from "./components/tv/TvLogin";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./App.css";
 
@@ -72,6 +73,8 @@ function AppContent() {
   }
 
   if (!isAuthenticated) {
+    // TV mode signs in with a QR code instead of the desktop login form.
+    if (tvMode) return <TvLogin />;
     return (
       <AppChrome>
         <Login />
