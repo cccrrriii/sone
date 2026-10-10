@@ -131,3 +131,31 @@ html.tv-mode {
 .tv-mode .tv-video button[title="More options"] {
   display: none;
 }
+
+/* The full-screen video keeps only what a remote needs: like, previous,
+   play/pause, next and quality. Shuffle, repeat and the rest live in Now
+   Playing; Back minimizes. */
+.tv-mode .tv-video button[title="Shuffle"],
+.tv-mode .tv-video button[title="Repeat"],
+.tv-mode .tv-video button[title="Minimize video"],
+.tv-mode .tv-video .group\/vol {
+  display: none;
+}
+
+/* Minimized, the video plays on in Now Playing where the cover would be
+   (placed by useTvMiniVideo), without its controls. */
+.tv-mode .tv-video.tv-video-mini {
+  display: flex !important;
+  inset: auto;
+  left: var(--tv-mini-x);
+  top: var(--tv-mini-y);
+  width: var(--tv-mini-w);
+  height: var(--tv-mini-h);
+  z-index: 10;
+  border-radius: 1rem;
+  overflow: hidden;
+  pointer-events: none;
+}
+.tv-mode .tv-video.tv-video-mini > :not(video) {
+  display: none !important;
+}

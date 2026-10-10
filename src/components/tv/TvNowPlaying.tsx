@@ -1,9 +1,10 @@
 import { useContext, useEffect, useRef, useState } from "react";
-import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
+import { useAtom, useAtomValue, useStore } from "jotai";
 import {
   ChevronDown,
   Heart,
   ListX,
+  Maximize2,
   Mic2,
   MoreHorizontal,
   Volume1,
@@ -17,7 +18,6 @@ import {
   SkipBack,
   SkipForward,
   Trash2,
-  Tv,
 } from "lucide-react";
 import TidalImage from "../TidalImage";
 import SignalPathPanel from "../SignalPathPanel";
@@ -52,6 +52,7 @@ import { useToast } from "../../contexts/ToastContext";
 import { TvButton, TvTrackRow } from "./TvParts";
 import { TvLyricsPanel } from "./TvLyrics";
 import { useTvLyrics } from "./useTvLyrics";
+import { useTvMiniVideo } from "./useTvMiniVideo";
 
 const SEEK_STEP_SECS = 10;
 const UP_NEXT_SHOWN = 20;
@@ -236,7 +237,7 @@ export default function TvNowPlaying() {
   const shuffle = useAtomValue(shuffleAtom);
   const [repeat, setRepeat] = useAtom(repeatAtom);
   const currentVideo = useAtomValue(currentVideoAtom);
-  const setVideoExpanded = useSetAtom(videoExpandedAtom);
+  const [videoExpanded, setVideoExpanded] = useAtom(videoExpandedAtom);
   const [lyricsOn, setLyricsOn] = useAtom(tvLyricsAtom);
   const [signalPathOpen, setSignalPathOpen] = useState(false);
   const lyrics = useTvLyrics(
@@ -258,6 +259,14 @@ export default function TvNowPlaying() {
   useTvInitialFocus(true);
   const screen = useContext(TvScreenContext);
   const upNextRef = useRef<HTMLElement>(null);
+  const videoSlotRef = useRef<HTMLDivElement>(null);
+  const showVideoInSlot =
+    track?.itemType === "video" &&
+    !!currentVideo &&
+    !videoExpanded &&
+    screen.active &&
+    !(lyricsOn && !!lyrics);
+  useTvMiniVideo(videoSlotRef, screen.element, showVideoInSlot);
   // After a row leaves the list, focus the row that took its place (or the
   // player, when the list is now empty).
   const refocusUpNext = (index: number) =>
@@ -333,6 +342,7 @@ export default function TvNowPlaying() {
           </div>
         ) : (
           <div
+            ref={isVideo ? videoSlotRef : undefined}
             className={`shrink-0 overflow-hidden rounded-[1rem] shadow-2xl bg-th-surface ${
               isVideo
                 ? "w-[min(55vw,60rem)] aspect-video"
@@ -469,8 +479,8 @@ export default function TvNowPlaying() {
             )}
             {isVideo && currentVideo && (
               <TvButton
-                icon={<Tv className={icon} />}
-                label="Watch video"
+                icon={<Maximize2 className={icon} />}
+                label="Full screen"
                 onClick={() => setVideoExpanded(true)}
               />
             )}
