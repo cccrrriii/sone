@@ -1,6 +1,7 @@
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -19,9 +20,20 @@ import {
   Play,
   Radio,
   User,
+  Pencil,
+  Plus,
+  Trash2,
+  Users,
+  X,
 } from "lucide-react";
 import TidalImage from "../TidalImage";
-import { fetchMediaTracks, getAllPlaylists, getTrack } from "../../api/tidal";
+import {
+  fetchMediaTracks,
+  getAllPlaylists,
+  getPlaylistDetails,
+  getTrack,
+  getTrackCredits,
+} from "../../api/tidal";
 import { authTokensAtom } from "../../atoms/auth";
 import {
   favoriteAlbumIdsAtom,
@@ -42,6 +54,7 @@ import { getTidalImageUrl } from "../../types";
 import { getTrackArtistDisplay, trackCoverId } from "../../utils/itemHelpers";
 import { actionForMedia, type TvView } from "./tvItems";
 import type { TvMenuItem, TvMenuSpec } from "./tvMenu";
+import type { TvPromptRequest } from "./TvPrompt";
 
 export interface TvMenuHostHandle {
   open: (spec: TvMenuSpec) => void;
@@ -59,14 +72,25 @@ export interface TvMenuHostHandle {
  */
 const TvMenuHost = forwardRef<
   TvMenuHostHandle,
-  { onNavigate: (view: TvView) => void; onPlayed: () => void }
->(function TvMenuHost({ onNavigate, onPlayed }, ref) {
+  {
+    onNavigate: (view: TvView) => void;
+    onPlayed: () => void;
+    /** Ask for a name with the on-screen keyboard (null: cancelled). */
+    onPrompt: (request: TvPromptRequest) => Promise<string | null>;
+    /** A playlist was deleted (close its page if it is open). */
+    onPlaylistDeleted: (uuid: string) => void;
+  }
+>(function TvMenuHost(
+  { onNavigate, onPlayed, onPrompt, onPlaylistDeleted },
+  ref,
+) {
   const store = useStore();
   const { showToast } = useToast();
   const { addToQueue, playNextInQueue } = usePlaybackActions();
   const playMedia = useMediaPlay();
   const fav = useFavorites();
-  const { addTrackToPlaylist } = usePlaylists();
+  const { addTrackToPlaylist, createPlaylist, updatePlaylist, deletePlaylist } =
+    usePlaylists();
   const userId = useAtomValue(authTokensAtom)?.user_id;
   const setAllPlaylists = useSetAtom(allPlaylistsAtom);
 
@@ -107,11 +131,31 @@ const TvMenuHost = forwardRef<
       const own = playlists.filter(
         (p) => p.creator?.id == null || p.creator.id === userId,
       );
+      const newPlaylist: TvMenuItem = {
+        label: "New playlist…",
+        icon: Plus,
+        onSelect: async () => {
+          const title = await onPrompt({
+            title: "New playlist",
+            confirm: "Create and add",
+          });
+          if (!title) return;
+          try {
+            const created = await createPlaylist(title);
+            setAllPlaylists((prev) => [created, ...prev]);
+            await addTrackToPlaylist(created.uuid, track.id);
+            showToast(`Added to new playlist "${label(title)}"`);
+          } catch {
+            showToast("Couldn't create the playlist", "error");
+          }
+        },
+      };
       return {
         title: "Add to playlist",
         subtitle: track.title,
-        items:
-          own.length > 0
+        items: [
+          newPlaylist,
+          ...(own.length > 0
             ? own.map((p) => ({
                 label: p.title,
                 icon: ListPlus,
@@ -124,10 +168,19 @@ const TvMenuHost = forwardRef<
                   }
                 },
               }))
-            : [{ label: "You have no playlists yet" }],
+            : [{ label: "You have no playlists yet" }]),
+        ],
       };
     },
-    [store, userId, setAllPlaylists, addTrackToPlaylist, showToast],
+    [
+      store,
+      userId,
+      setAllPlaylists,
+      addTrackToPlaylist,
+      createPlaylist,
+      onPrompt,
+      showToast,
+    ],
   );
 
   const trackMenu = useCallback(
@@ -205,6 +258,26 @@ const TvMenuHost = forwardRef<
             },
           },
         );
+        items.push({
+          label: "Credits",
+          icon: Users,
+          submenu: async () => {
+            const credits = await getTrackCredits(track.id);
+            return {
+              title: "Credits",
+              subtitle: track.title,
+              // One line per role, e.g. "Producer: A, B"; for reading only.
+              items:
+                credits.length > 0
+                  ? credits.map((c) => ({
+                      label: `${c.creditType}: ${c.contributors
+                        .map((p) => p.name)
+                        .join(", ")}`,
+                    }))
+                  : [{ label: "No credits available for this track" }],
+            };
+          },
+        });
         if (track.album?.id) {
           items.push({
             label: "Go to album",
@@ -382,6 +455,74 @@ const TvMenuHost = forwardRef<
           },
         });
       }
+      // The user's own playlists can be renamed and deleted (same ownership
+      // rule as the desktop: they are its creator).
+      if (
+        item.type === "playlist" &&
+        userId != null &&
+        store
+          .get(allPlaylistsAtom)
+          .some((p) => p.uuid === item.uuid && p.creator?.id === userId)
+      ) {
+        items.push(
+          {
+            label: "Rename playlist",
+            icon: Pencil,
+            onSelect: async () => {
+              const title = await onPrompt({
+                title: "Rename playlist",
+                initial: item.title,
+                confirm: "Rename",
+              });
+              if (!title || title === item.title) return;
+              try {
+                // Keep its description and visibility as they are.
+                const details = await getPlaylistDetails(item.uuid);
+                await updatePlaylist(
+                  item.uuid,
+                  title,
+                  details.description ?? "",
+                  details.accessType ??
+                    (details.sharingLevel === "PUBLIC" ? "PUBLIC" : "UNLISTED"),
+                );
+                setAllPlaylists((prev) =>
+                  prev.map((p) => (p.uuid === item.uuid ? { ...p, title } : p)),
+                );
+                showToast(`Renamed to "${label(title)}"`);
+              } catch {
+                showToast("Couldn't rename the playlist", "error");
+              }
+            },
+          },
+          {
+            label: "Delete playlist",
+            icon: Trash2,
+            submenu: () => ({
+              title: `Delete "${label(name)}"?`,
+              subtitle: "This can't be undone.",
+              items: [
+                {
+                  label: "Delete",
+                  icon: Trash2,
+                  onSelect: async () => {
+                    try {
+                      await deletePlaylist(item.uuid);
+                      setAllPlaylists((prev) =>
+                        prev.filter((p) => p.uuid !== item.uuid),
+                      );
+                      onPlaylistDeleted(item.uuid);
+                      showToast(`Deleted "${label(name)}"`);
+                    } catch {
+                      showToast("Couldn't delete the playlist", "error");
+                    }
+                  },
+                },
+                { label: "Cancel", icon: X, onSelect: () => {} },
+              ],
+            }),
+          },
+        );
+      }
       if (open.kind === "open") {
         const what =
           item.type === "artist"
@@ -434,8 +575,23 @@ const TvMenuHost = forwardRef<
       showToast,
       onNavigate,
       onPlayed,
+      userId,
+      onPrompt,
+      updatePlaylist,
+      deletePlaylist,
+      setAllPlaylists,
+      onPlaylistDeleted,
     ],
   );
+
+  // Owning a playlist is looked up in the user's playlists; load them once
+  // so Rename / Delete show up without visiting "Add to playlist" first.
+  useEffect(() => {
+    if (userId == null || store.get(allPlaylistsAtom).length > 0) return;
+    getAllPlaylists(userId, 0, 500)
+      .then((r) => setAllPlaylists(r.items))
+      .catch(() => {});
+  }, [userId, store, setAllPlaylists]);
 
   useImperativeHandle(
     ref,

@@ -4,6 +4,7 @@ import type { MediaItemType, Track } from "../../types";
 import type { usePlaybackActions } from "../../hooks/usePlaybackActions";
 import type { TvAction, TvView } from "./tvItems";
 import type { TvMenuItem, TvMenuSpec } from "./tvMenu";
+import type { TvPromptRequest } from "./TvPrompt";
 
 export interface TvNav {
   /** Open a screen on top of the current one; Back returns to it. */
@@ -26,6 +27,8 @@ export interface TvNav {
    *  `extra` adds actions that depend on where the track is listed. */
   trackMenu: (track: Track, extra?: TvMenuItem[]) => TvMenuSpec;
   mediaMenu: (item: MediaItemType) => TvMenuSpec;
+  /** Ask for a line of text with the on-screen keyboard; null if cancelled. */
+  prompt: (request: TvPromptRequest) => Promise<string | null>;
   /** Open the full desktop settings sheet, navigable with the remote. */
   openMoreSettings: () => void;
   /** Carry out a card's action. `queue` is the row it sits in, so playing a

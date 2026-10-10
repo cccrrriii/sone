@@ -144,6 +144,19 @@ export default function TvArtistScreen({
               key={`${section.title}:${i}`}
               title={section.title}
               entries={entries}
+              viewAll={
+                section.apiPath
+                  ? {
+                      type: "list",
+                      title: `${name}: ${section.title}`,
+                      source: {
+                        kind: "artist",
+                        artistId: view.id,
+                        apiPath: section.apiPath,
+                      },
+                    }
+                  : undefined
+              }
             />
           );
         })}

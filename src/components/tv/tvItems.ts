@@ -24,10 +24,20 @@ export type TvView =
   /** A TIDAL page by its API path: an Explore genre, mood or shortcut, or
    *  (with `all`) every item of a home row behind "View all". */
   | { type: "page"; title: string; apiPath: string; all?: boolean }
+  /** Everything in one of the user's collection rows, or behind an artist
+   *  page row's "View all". */
+  | { type: "list"; title: string; source: TvListSource }
   | { type: "album"; id: number; title?: string; image?: string }
   | { type: "playlist"; uuid: string; title?: string; image?: string }
   | { type: "mix"; mixId: string; title?: string; image?: string }
   | { type: "artist"; id: number; name?: string; image?: string };
+
+export type TvListSource =
+  | {
+      kind: "collection";
+      what: "playlists" | "albums" | "artists" | "mixes" | "videos";
+    }
+  | { kind: "artist"; artistId: number; apiPath: string };
 
 export type TvAction =
   | { kind: "open"; view: TvView }

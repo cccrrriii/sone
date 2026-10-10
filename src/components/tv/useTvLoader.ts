@@ -31,10 +31,19 @@ export function useTvLoader<T>(load: () => Promise<T>, failure: string) {
     setAttempt((a) => a + 1);
   }, []);
 
+  /** Load again in the background, keeping what is shown (and focused)
+   *  until the new data arrives. */
+  const refresh = useCallback(() => {
+    load().then(
+      (data) => setState({ data, error: null }),
+      () => {},
+    );
+  }, [load]);
+
   /** Change the loaded data in place (after removing a row, say). */
   const update = useCallback((change: (data: T) => T) => {
     setState((s) => (s.data === null ? s : { ...s, data: change(s.data) }));
   }, []);
 
-  return { ...state, retry, update };
+  return { ...state, retry, update, refresh };
 }

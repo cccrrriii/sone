@@ -1,13 +1,13 @@
 import { useContext, useEffect, useRef, useState } from "react";
-import { Delete, Search, X } from "lucide-react";
+import { Search } from "lucide-react";
 import { searchTidal } from "../../api/tidal";
 import { safeErrorMessage } from "../../lib/errorUtils";
 import type { SearchResults } from "../../types";
 import { TvScreenContext, useTvInitialFocus } from "./TvNavContext";
+import TvKeyboard from "./TvKeyboard";
 import { TvRow, TvSpinner } from "./TvParts";
 import { sectionEntries } from "./tvItems";
 
-const KEYS = "abcdefghijklmnopqrstuvwxyz1234567890".split("");
 const DEBOUNCE_MS = 450;
 
 // Kept across visits: switching rail sections unmounts the screen.
@@ -116,43 +116,8 @@ export default function TvSearch() {
             className="flex-1 min-w-0 bg-transparent outline-none text-[0.9rem] text-th-text-primary placeholder:text-th-text-faint"
           />
         </label>
-        <div className="mt-[1rem] grid grid-cols-6 gap-[0.4rem]">
-          {KEYS.map((k, i) => (
-            <button
-              key={k}
-              data-tv-focusable
-              data-tv-autofocus={i === 0 || undefined}
-              onClick={() => setQuery((q) => q + k)}
-              className="tv-key h-[2.4rem] rounded-[0.4rem] bg-th-surface text-[0.85rem] font-semibold uppercase text-th-text-primary"
-            >
-              {k}
-            </button>
-          ))}
-          <button
-            data-tv-focusable
-            onClick={() => setQuery((q) => q + " ")}
-            className="tv-key col-span-3 h-[2.4rem] rounded-[0.4rem] bg-th-surface text-[0.75rem] font-semibold text-th-text-primary"
-          >
-            Space
-          </button>
-          <button
-            data-tv-focusable
-            aria-label="Delete"
-            title="Delete"
-            onClick={() => setQuery((q) => q.slice(0, -1))}
-            className="tv-key col-span-2 h-[2.4rem] rounded-[0.4rem] bg-th-surface flex items-center justify-center text-th-text-primary"
-          >
-            <Delete className="w-[1.1rem] h-[1.1rem]" />
-          </button>
-          <button
-            data-tv-focusable
-            aria-label="Clear"
-            title="Clear"
-            onClick={() => setQuery("")}
-            className="tv-key h-[2.4rem] rounded-[0.4rem] bg-th-surface flex items-center justify-center text-th-text-primary"
-          >
-            <X className="w-[1.1rem] h-[1.1rem]" />
-          </button>
+        <div className="mt-[1rem]">
+          <TvKeyboard autoFocus onChange={setQuery} />
         </div>
       </div>
 

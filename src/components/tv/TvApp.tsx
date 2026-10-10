@@ -56,7 +56,9 @@ import TvArtistScreen from "./TvArtistScreen";
 import TvSettings from "./TvSettings";
 import TvPageScreen from "./TvPageScreen";
 import TvFeedScreen from "./TvFeedScreen";
+import TvListScreen from "./TvListScreen";
 import TvNativeLayer from "./TvNativeLayer";
+import TvPrompt, { type TvPromptRequest } from "./TvPrompt";
 import TvMenuHost, { type TvMenuHostHandle } from "./TvMenuHost";
 import { menuForElement } from "./tvMenu";
 import "./tv.css";
@@ -135,6 +137,8 @@ function renderScreen(view: TvView): ReactNode {
       return <TvPageScreen title="Explore" apiPath="pages/explore" />;
     case "feed":
       return <TvFeedScreen />;
+    case "list":
+      return <TvListScreen title={view.title} source={view.source} />;
     case "page":
       return (
         <TvPageScreen
@@ -394,6 +398,15 @@ export default function TvApp() {
     if (s[0].view.type !== "home") goTo("home");
   }, [focusRail, goTo]);
 
+  // A deleted playlist's page closes if it is the one on top.
+  const leavePlaylist = useCallback(
+    (uuid: string) => {
+      const top = stackRef.current[stackRef.current.length - 1]?.view;
+      if (top?.type === "playlist" && top.uuid === uuid) back();
+    },
+    [back],
+  );
+
   useLayoutEffect(() => {
     const id = pendingRestore.current;
     if (id == null) return;
@@ -444,6 +457,26 @@ export default function TvApp() {
   );
 
   const menuRef = useRef<TvMenuHostHandle>(null);
+
+  // A text prompt (a playlist name) over everything; resolves with the text,
+  // or null when cancelled.
+  const [prompt, setPrompt] = useState<TvPromptRequest | null>(null);
+  const promptResolve = useRef<((text: string | null) => void) | null>(null);
+  const askText = useCallback(
+    (request: TvPromptRequest) =>
+      new Promise<string | null>((resolve) => {
+        promptResolve.current?.(null);
+        promptResolve.current = resolve;
+        setPrompt(request);
+      }),
+    [],
+  );
+  const finishPrompt = useCallback((text: string | null) => {
+    const resolve = promptResolve.current;
+    promptResolve.current = null;
+    setPrompt(null);
+    resolve?.(text);
+  }, []);
   const [moreSettings, setMoreSettings] = useState(false);
   // The layer hands focus back itself when it closes.
   const openMoreSettings = useCallback(() => setMoreSettings(true), []);
@@ -460,8 +493,9 @@ export default function TvApp() {
       trackMenu: (track, extra) => menuRef.current!.trackMenu(track, extra),
       mediaMenu: (item) => menuRef.current!.mediaMenu(item),
       openMoreSettings,
+      prompt: askText,
     }),
-    [push, back, run, showNowPlaying, playTrack, openMoreSettings],
+    [push, back, run, showNowPlaying, playTrack, openMoreSettings, askText],
   );
 
   // The desktop "focus search" shortcut opens the Search screen here.
@@ -691,6 +725,7 @@ export default function TvApp() {
         e.preventDefault();
         if (isTextField(e.target)) e.target.blur();
         if (menuRef.current?.isOpen()) menuRef.current.back();
+        else if (promptResolve.current) finishPrompt(null);
         else if (scope?.hasAttribute("data-tv-native")) {
           // Desktop dialogs shown in TV mode close on Escape themselves.
           window.dispatchEvent(
@@ -715,7 +750,7 @@ export default function TvApp() {
       window.removeEventListener("keyup", onKeyUp);
       if (held) window.clearTimeout(held.timer);
     };
-  }, [store, back, togglePlayPause, playNext, playPrevious]);
+  }, [store, back, togglePlayPause, playNext, playPrevious, finishPrompt]);
 
   // Now Playing opened on top of another screen still counts as being on
   // Now Playing for the rail's highlight.
@@ -787,7 +822,14 @@ export default function TvApp() {
           <MiniBar onOpen={() => goTo("nowPlaying")} />
         )}
       </div>
-      <TvMenuHost ref={menuRef} onNavigate={push} onPlayed={showNowPlaying} />
+      <TvMenuHost
+        ref={menuRef}
+        onNavigate={push}
+        onPlayed={showNowPlaying}
+        onPrompt={askText}
+        onPlaylistDeleted={leavePlaylist}
+      />
+      {prompt && <TvPrompt request={prompt} onDone={finishPrompt} />}
       {moreSettings && (
         <TvNativeLayer width={800} height={740}>
           <SettingsSheet open onClose={closeMoreSettings} />
