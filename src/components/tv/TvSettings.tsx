@@ -224,15 +224,15 @@ export default function TvSettings() {
         {exclusive && (
           <Row
             title="Bit-perfect"
-            subtitle="No volume, normalization or resampling — the DAC gets the source unaltered"
+            subtitle="The DAC gets the source unaltered. Volume and normalization switch at once; the output path changes with the next track"
             toggle={bitPerfect}
             onSelect={() => {
               const next = !bitPerfect;
               setBitPerfect(next);
               showToast(
                 next
-                  ? "Bit-perfect on — takes effect next track"
-                  : "Bit-perfect off — takes effect next track",
+                  ? "Bit-perfect on — volume set to 100% now, output path changes with the next track"
+                  : "Bit-perfect off — your volume is back now, output path changes with the next track",
               );
             }}
           />

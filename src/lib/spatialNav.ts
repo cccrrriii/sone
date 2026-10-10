@@ -180,8 +180,20 @@ export function moveFocus(scope: HTMLElement, dir: Direction): boolean {
   // Up/Down past the top or bottom of the content must not land in it.
   const sideways = dir === "left" || dir === "right";
   const inSide = !!current.closest(SIDE);
+  // Left/Right stay on the current line: at the end of a row nothing
+  // happens, rather than jumping diagonally into the next row. A side panel
+  // (the rail) is reachable sideways from anywhere, and leaving it lands on
+  // whatever the content last had focused.
+  const onLine = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    return r.top < from.bottom && r.bottom > from.top;
+  };
   const others = all.filter(
-    (el) => el !== current && (sideways || inSide || !el.closest(SIDE)),
+    (el) =>
+      el !== current &&
+      (sideways
+        ? inSide || !!el.closest(SIDE) || onLine(el)
+        : inSide || !el.closest(SIDE)),
   );
   let group: Element | null = current.parentElement?.closest(REMEMBER) ?? null;
   while (true) {

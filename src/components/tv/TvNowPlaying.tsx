@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
 import {
   ChevronDown,
@@ -18,6 +18,8 @@ import {
   Tv,
 } from "lucide-react";
 import TidalImage from "../TidalImage";
+import SignalPathPanel from "../SignalPathPanel";
+import TvNativeLayer from "./TvNativeLayer";
 import {
   currentTrackAtom,
   isPlayingAtom,
@@ -42,7 +44,8 @@ import {
   getTrackArtistDisplay,
   trackCoverId,
 } from "../../utils/itemHelpers";
-import { useTvInitialFocus, useTvNav } from "./TvNavContext";
+import { TvScreenContext, useTvInitialFocus, useTvNav } from "./TvNavContext";
+import { focusFirstIn } from "../../lib/spatialNav";
 import { TvButton, TvTrackRow } from "./TvParts";
 import { TvLyricsPanel } from "./TvLyrics";
 import { useTvLyrics } from "./useTvLyrics";
@@ -130,6 +133,12 @@ function VolumeControl() {
   );
 }
 
+/** How long after the last Left/Right press the seek is actually sent. */
+const SEEK_SETTLE_MS = 350;
+/** How long the target keeps showing after the seek, while the playback
+ *  position catches up, so the bar does not snap back and forth. */
+const SEEK_HOLD_MS = 700;
+
 function Progress({
   duration,
   seekable,
@@ -137,19 +146,50 @@ function Progress({
   duration: number;
   seekable: boolean;
 }) {
-  const position = Math.min(usePosition(), duration || Infinity);
+  const live = Math.min(usePosition(), duration || Infinity);
+  const isPlaying = useAtomValue(isPlayingAtom);
   const { seekTo } = usePlaybackActions();
+  // While seeking with the remote the bar shows where it is going, and the
+  // seek itself goes out once the presses stop: one smooth jump instead of a
+  // thumb that bounces between each request and the real position.
+  const [target, setTarget] = useState<number | null>(null);
+  const targetRef = useRef<number | null>(null);
+  const timers = useRef<number[]>([]);
+  useEffect(
+    () => () => timers.current.forEach((t) => window.clearTimeout(t)),
+    [],
+  );
+  const position = target ?? live;
   const pct = duration > 0 ? (position / duration) * 100 : 0;
 
-  // Left/Right on the focused bar seek instead of moving focus; the TV key
-  // handler skips events a focused element already handled.
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (!seekable || duration <= 0) return;
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
     const delta = e.key === "ArrowLeft" ? -SEEK_STEP_SECS : SEEK_STEP_SECS;
-    void seekTo(Math.max(0, Math.min(duration - 1, position + delta)));
+    const next = Math.max(
+      0,
+      Math.min(duration - 1, (targetRef.current ?? live) + delta),
+    );
+    targetRef.current = next;
+    setTarget(next);
+    timers.current.forEach((t) => window.clearTimeout(t));
+    timers.current = [
+      window.setTimeout(() => {
+        void seekTo(next).finally(() => {
+          timers.current.push(
+            window.setTimeout(() => {
+              targetRef.current = null;
+              setTarget(null);
+            }, SEEK_HOLD_MS),
+          );
+        });
+      }, SEEK_SETTLE_MS),
+    ];
   };
+
+  // Between position samples the bar glides instead of stepping.
+  const glide = target === null && isPlaying ? "250ms linear" : "0ms linear";
 
   return (
     <div className="w-full">
@@ -166,15 +206,17 @@ function Progress({
       >
         <div
           className="absolute inset-y-0 left-0 rounded-full bg-th-accent"
-          style={{ width: `${pct}%` }}
+          style={{ width: `${pct}%`, transition: `width ${glide}` }}
         />
         <div
           className="tv-progress-thumb absolute top-1/2 h-[0.9rem] w-[0.9rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-th-text-primary opacity-0"
-          style={{ left: `${pct}%` }}
+          style={{ left: `${pct}%`, transition: `left ${glide}` }}
         />
       </div>
       <div className="mt-[0.4rem] flex justify-between text-[0.7rem] text-th-text-muted tabular-nums">
-        <span>{formatTime(position)}</span>
+        <span className={target !== null ? "text-th-text-primary" : ""}>
+          {formatTime(position)}
+        </span>
         <span>{duration > 0 ? formatTime(duration) : ""}</span>
       </div>
     </div>
@@ -193,6 +235,7 @@ export default function TvNowPlaying() {
   const currentVideo = useAtomValue(currentVideoAtom);
   const setVideoExpanded = useSetAtom(videoExpandedAtom);
   const [lyricsOn, setLyricsOn] = useAtom(tvLyricsAtom);
+  const [signalPathOpen, setSignalPathOpen] = useState(false);
   const lyrics = useTvLyrics(
     track && track.itemType !== "video" ? track.id : undefined,
   );
@@ -207,6 +250,7 @@ export default function TvNowPlaying() {
   } = usePlaybackActions();
 
   useTvInitialFocus(true);
+  const screen = useContext(TvScreenContext);
 
   if (!track) {
     return (
@@ -294,9 +338,22 @@ export default function TvNowPlaying() {
             </p>
           )}
           {quality && (
-            <p className="mt-[0.8rem] inline-block rounded-[0.3rem] border border-th-border-subtle px-[0.5rem] py-[0.1rem] text-[0.6rem] font-bold tracking-[0.12em] text-th-accent">
+            <button
+              data-tv-focusable
+              onClick={() => setSignalPathOpen(true)}
+              title="Signal path"
+              className="tv-button mt-[0.8rem] inline-flex items-center gap-[0.5rem] rounded-[0.3rem] border border-th-border-subtle px-[0.5rem] py-[0.15rem] text-[0.6rem] font-bold tracking-[0.12em] text-th-accent"
+            >
               {quality}
-            </p>
+              <span className="font-semibold tracking-normal text-th-text-muted">
+                · Signal path
+              </span>
+            </button>
+          )}
+          {signalPathOpen && (
+            <TvNativeLayer width={680} height={720}>
+              <SignalPathPanel open onClose={() => setSignalPathOpen(false)} />
+            </TvNativeLayer>
           )}
 
           <div className="mt-[2rem]">
@@ -442,7 +499,15 @@ export default function TvNowPlaying() {
               track={t}
               index={i}
               showCover
-              onSelect={() => void playFromQueue(i)}
+              onSelect={() => {
+                void playFromQueue(i);
+                // The row just played leaves the list; go back up to the
+                // player (Play/Pause) instead of losing focus.
+                requestAnimationFrame(() => {
+                  const el = screen.element();
+                  if (el) focusFirstIn(el);
+                });
+              }}
             />
           ))}
         </section>

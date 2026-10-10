@@ -12,7 +12,7 @@ import { authTokensAtom } from "../../atoms/auth";
 import { usePlaybackActions } from "../../hooks/usePlaybackActions";
 import { useFavorites } from "../../hooks/useFavorites";
 import { isTrackUnavailable } from "../../lib/trackAvailability";
-import type { MediaItemType, Track } from "../../types";
+import type { AlbumDetail, MediaItemType, Playlist, Track } from "../../types";
 import { getTidalImageUrl } from "../../types";
 import {
   formatTotalDuration,
@@ -36,6 +36,10 @@ interface Loaded {
   image?: string;
   tracks: Track[];
   artist?: { id: number; name: string };
+  /** The album / playlist itself, handed to the like call so the
+   *  collection shows it straight away (as the desktop pages do). */
+  album?: AlbumDetail;
+  playlist?: Playlist;
 }
 
 const FAVORITES_PAGE = 100;
@@ -60,6 +64,7 @@ async function loadList(view: ListView, userId?: number): Promise<Loaded> {
           .join(" · "),
         image: getTidalImageUrl(a.cover, 1280),
         tracks: page.tracks,
+        album: a,
         artist: artist ? { id: artist.id, name: artist.name } : undefined,
       };
     }
@@ -82,10 +87,13 @@ async function loadList(view: ListView, userId?: number): Promise<Loaded> {
         ]
           .filter(Boolean)
           .join(" · "),
+        // Playlist images have no 1280px size; 640 is the largest the CDN
+        // serves for both square and wide playlist art.
         image:
-          getTidalImageUrl(details?.squareImage ?? details?.image, 1280) ||
+          getTidalImageUrl(details?.squareImage ?? details?.image, 640) ||
           view.image,
         tracks,
+        playlist: details ?? undefined,
       };
     }
     case "mix": {
@@ -100,14 +108,21 @@ async function loadList(view: ListView, userId?: number): Promise<Loaded> {
     }
     case "favorites": {
       if (!userId) throw new Error("Not signed in");
+      // Same paging as the desktop favorites view: advance by what came
+      // back (a page can be short of the limit) until the total is reached.
       const tracks: Track[] = [];
-      for (let offset = 0; ; offset += FAVORITES_PAGE) {
+      const seen = new Set<number>();
+      let offset = 0;
+      for (;;) {
         const page = await getFavoriteTracks(userId, offset, FAVORITES_PAGE);
-        tracks.push(...page.items);
-        if (
-          page.items.length < FAVORITES_PAGE ||
-          tracks.length >= page.totalNumberOfItems
-        ) {
+        for (const t of page.items) {
+          if (!seen.has(t.id)) {
+            seen.add(t.id);
+            tracks.push(t);
+          }
+        }
+        offset += page.items.length;
+        if (page.items.length === 0 || offset >= page.totalNumberOfItems) {
           break;
         }
       }
@@ -190,11 +205,11 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
       view.type === "album"
         ? liked
           ? fav.removeFavoriteAlbum(view.id)
-          : fav.addFavoriteAlbum(view.id)
+          : fav.addFavoriteAlbum(view.id, data.album)
         : view.type === "playlist"
           ? liked
             ? fav.removeFavoritePlaylist(view.uuid)
-            : fav.addFavoritePlaylist(view.uuid)
+            : fav.addFavoritePlaylist(view.uuid, data.playlist)
           : view.type === "mix"
             ? liked
               ? fav.removeFavoriteMix(view.mixId)

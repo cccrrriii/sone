@@ -51,6 +51,7 @@ import TvNowPlaying from "./TvNowPlaying";
 import TvTrackListScreen from "./TvTrackListScreen";
 import TvArtistScreen from "./TvArtistScreen";
 import TvSettings from "./TvSettings";
+import TvNativeLayer from "./TvNativeLayer";
 import TvMenuHost, { type TvMenuHostHandle } from "./TvMenuHost";
 import { menuForElement } from "./tvMenu";
 import "./tv.css";
@@ -172,38 +173,6 @@ function MiniBar({ onOpen }: { onOpen: () => void }) {
       ) : (
         <Play className="w-[1.1rem] h-[1.1rem] text-th-text-secondary" />
       )}
-    </div>
-  );
-}
-
-/**
- * The desktop settings sheet inside TV mode, for the settings that have no
- * TV screen of their own. Scaled up to TV size, and marked native so every
- * control in it is reachable with the arrow keys.
- */
-function MoreSettings({ onClose }: { onClose: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [zoom] = useState(() => {
-    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
-    // The sheet is at most 800x740 CSS px; keep it on screen.
-    return Math.max(
-      1,
-      Math.min(
-        rem / 16,
-        (window.innerHeight * 0.94) / 740,
-        (window.innerWidth * 0.95) / 800,
-      ),
-    );
-  });
-  useLayoutEffect(() => {
-    const id = requestAnimationFrame(() => {
-      if (ref.current) focusFirstIn(ref.current);
-    });
-    return () => cancelAnimationFrame(id);
-  }, []);
-  return (
-    <div ref={ref} data-tv-modal data-tv-native style={{ zoom }}>
-      <SettingsSheet open onClose={onClose} />
     </div>
   );
 }
@@ -401,24 +370,9 @@ export default function TvApp() {
 
   const menuRef = useRef<TvMenuHostHandle>(null);
   const [moreSettings, setMoreSettings] = useState(false);
-  const moreSettingsReturn = useRef<HTMLElement | null>(null);
-
-  const moreSettingsOpenRef = useRef(false);
-  useLayoutEffect(() => {
-    moreSettingsOpenRef.current = moreSettings;
-  }, [moreSettings]);
-
-  const openMoreSettings = useCallback(() => {
-    const active = document.activeElement;
-    moreSettingsReturn.current = active instanceof HTMLElement ? active : null;
-    setMoreSettings(true);
-  }, []);
-  const closeMoreSettings = useCallback(() => {
-    setMoreSettings(false);
-    const el = moreSettingsReturn.current;
-    moreSettingsReturn.current = null;
-    if (el?.isConnected) requestAnimationFrame(() => focusElement(el));
-  }, []);
+  // The layer hands focus back itself when it closes.
+  const openMoreSettings = useCallback(() => setMoreSettings(true), []);
+  const closeMoreSettings = useCallback(() => setMoreSettings(false), []);
 
   const nav = useMemo<TvNav>(
     () => ({
@@ -486,10 +440,16 @@ export default function TvApp() {
           openMenuFor(document.activeElement);
           return;
         case "Enter": {
+          // While Enter is held after a long press, its auto-repeat must not
+          // activate whatever the menu focused (its first entry).
+          if (held) {
+            e.preventDefault();
+            return;
+          }
           const target = document.activeElement as HTMLElement | null;
           if (!target || !menuForElement(target)) return;
           e.preventDefault();
-          if (e.repeat || held) return;
+          if (e.repeat) return;
           held = {
             el: target,
             fired: false,
@@ -513,7 +473,23 @@ export default function TvApp() {
           return;
         }
         e.preventDefault();
-        if (scope) moveFocus(scope, dir);
+        if (!scope) return;
+        // Focus got lost (its element went away, e.g. a played "Up next"
+        // row): pick up in the current screen, not in the hidden rail.
+        if (
+          scope === rootRef.current &&
+          !scope.contains(document.activeElement)
+        ) {
+          const screen = scope.querySelector<HTMLElement>(
+            ".tv-screen:not(.hidden)",
+          );
+          if (screen && focusFirstIn(screen)) return;
+        }
+        const moved = moveFocus(scope, dir);
+        // The action menu slides in from the right; Left leaves it.
+        if (!moved && dir === "left" && menuRef.current?.isOpen()) {
+          menuRef.current.back();
+        }
         return;
       }
 
@@ -521,11 +497,17 @@ export default function TvApp() {
         BACK_KEYS.has(e.key) ||
         (e.key === "Backspace" && !isTextField(e.target))
       ) {
+        // A desktop dialog handles Escape through its own dismiss handler.
+        if (e.key === "Escape" && scope?.hasAttribute("data-tv-native")) return;
         e.preventDefault();
         if (isTextField(e.target)) e.target.blur();
         if (menuRef.current?.isOpen()) menuRef.current.back();
-        else if (moreSettingsOpenRef.current) closeMoreSettings();
-        else back();
+        else if (scope?.hasAttribute("data-tv-native")) {
+          // Desktop dialogs shown in TV mode close on Escape themselves.
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+          );
+        } else back();
       }
     };
 
@@ -544,7 +526,7 @@ export default function TvApp() {
       window.removeEventListener("keyup", onKeyUp);
       if (held) window.clearTimeout(held.timer);
     };
-  }, [store, back, togglePlayPause, playNext, playPrevious, closeMoreSettings]);
+  }, [store, back, togglePlayPause, playNext, playPrevious]);
 
   // Now Playing opened on top of another screen still counts as being on
   // Now Playing for the rail's highlight.
@@ -612,7 +594,11 @@ export default function TvApp() {
         )}
       </div>
       <TvMenuHost ref={menuRef} onNavigate={push} onPlayed={showNowPlaying} />
-      {moreSettings && <MoreSettings onClose={closeMoreSettings} />}
+      {moreSettings && (
+        <TvNativeLayer width={800} height={740}>
+          <SettingsSheet open onClose={closeMoreSettings} />
+        </TvNativeLayer>
+      )}
       {currentVideo && <VideoPlayer />}
     </TvNavContext.Provider>
   );

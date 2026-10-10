@@ -306,7 +306,14 @@ const TvMenuHost = forwardRef<
               run: () =>
                 on
                   ? fav.removeFavoriteAlbum(item.id)
-                  : fav.addFavoriteAlbum(item.id),
+                  : fav.addFavoriteAlbum(item.id, {
+                      id: item.id,
+                      title: item.title,
+                      cover: item.cover,
+                      artist: item.artistName
+                        ? { id: 0, name: item.artistName }
+                        : undefined,
+                    }),
             };
           }
           case "playlist": {
@@ -317,7 +324,11 @@ const TvMenuHost = forwardRef<
               run: () =>
                 on
                   ? fav.removeFavoritePlaylist(item.uuid)
-                  : fav.addFavoritePlaylist(item.uuid),
+                  : fav.addFavoritePlaylist(item.uuid, {
+                      uuid: item.uuid,
+                      title: item.title,
+                      squareImage: item.image,
+                    }),
             };
           }
           case "mix": {
