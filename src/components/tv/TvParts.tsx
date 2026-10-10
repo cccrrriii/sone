@@ -192,7 +192,7 @@ export function TvTrackRow({
         <span className="w-[1.6rem] shrink-0 text-right text-[0.75rem] text-th-text-muted tabular-nums">
           {isCurrent ? (
             <AudioLines
-              className={`inline text-th-accent w-[1rem] h-[1rem] ${playing ? "animate-pulse" : ""}`}
+              className={`inline w-[1rem] h-[1rem] ${playing ? "text-th-accent" : "text-th-text-muted"}`}
             />
           ) : (
             index + 1

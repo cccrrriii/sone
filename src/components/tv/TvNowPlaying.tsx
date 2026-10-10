@@ -272,6 +272,10 @@ export default function TvNowPlaying() {
 
   const isVideo = track.itemType === "video";
   const cover = getTidalImageUrl(trackCoverId(track), 1280);
+  // The backdrop is blurred anyway: a small image scaled up is soft by
+  // itself and needs only a light blur, which is far cheaper to paint on
+  // weak integrated graphics than a heavy blur over a full-size cover.
+  const backdrop = getTidalImageUrl(trackCoverId(track), 160);
   const liked = favoriteTrackIds.has(track.id);
   const upNext = [...manualQueue, ...queue].slice(0, UP_NEXT_SHOWN);
   const artist = track.artist ?? track.artists?.[0];
@@ -285,11 +289,11 @@ export default function TvNowPlaying() {
     <div className="relative h-full">
       {/* Blurred cover backdrop */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        {cover && (
+        {backdrop && (
           <TidalImage
-            src={cover}
+            src={backdrop}
             alt=""
-            className="absolute inset-0 w-full h-full scale-125 blur-[3rem] opacity-35"
+            className="absolute inset-0 w-full h-full scale-125 blur-[1.2rem] opacity-35"
           />
         )}
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-th-base/60 to-th-base" />

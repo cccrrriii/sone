@@ -153,7 +153,7 @@ function MiniBar({ onOpen }: { onOpen: () => void }) {
   return (
     <div
       onClick={onOpen}
-      className="shrink-0 flex items-center gap-[1rem] h-[3.6rem] pl-[1.5rem] pr-[3rem] bg-th-surface/80 border-t border-th-border-subtle backdrop-blur cursor-pointer"
+      className="shrink-0 flex items-center gap-[1rem] h-[3.6rem] pl-[1.5rem] pr-[3rem] bg-th-surface border-t border-th-border-subtle cursor-pointer"
     >
       <TidalImage
         src={getTidalImageUrl(trackCoverId(track), 160) || undefined}
