@@ -39,6 +39,8 @@ interface Loaded {
   title: string;
   subtitle?: string;
   image?: string;
+  /** Show the liked-tracks heart tile instead of a cover image. */
+  heart?: boolean;
   tracks: Track[];
   artist?: { id: number; name: string };
   /** The album / playlist itself, handed to the like call so the
@@ -135,9 +137,8 @@ async function loadList(view: ListView, userId?: number): Promise<Loaded> {
         kicker: "Collection",
         title: "My Tracks",
         subtitle: `${tracks.length} tracks`,
-        image: tracks[0]?.album?.cover
-          ? getTidalImageUrl(tracks[0].album.cover, 1280)
-          : undefined,
+        // Shown as the heart tile, as in the collection and on the desktop.
+        heart: true,
         tracks,
       };
     }
@@ -273,12 +274,21 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
           className="aspect-square shrink-0 overflow-hidden rounded-[0.8rem] bg-th-surface shadow-2xl"
           style={{ width: COVER_SIZE }}
         >
-          <TidalImage
-            src={data.image || undefined}
-            alt={data.title}
-            type="album"
-            className="w-full h-full"
-          />
+          {data.heart ? (
+            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-th-accent to-th-surface">
+              <Heart
+                className="w-[38%] h-[38%] text-white"
+                fill="currentColor"
+              />
+            </div>
+          ) : (
+            <TidalImage
+              src={data.image || undefined}
+              alt={data.title}
+              type="album"
+              className="w-full h-full"
+            />
+          )}
         </div>
         {data.kicker && (
           <p className="mt-[1.4rem] text-[0.65rem] font-bold uppercase tracking-[0.15em] text-th-text-muted">
