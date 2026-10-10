@@ -119,32 +119,32 @@ html.tv-mode {
 }
 
 /* The video player's control bars are sized in px for the desktop; scale
-   them up on a TV (the class is set when the remote first reaches it). */
-.tv-mode .tv-video > .z-20 {
+   them up on a TV (marked by TvApp when the player mounts). */
+.tv-mode [data-tv-video] > .z-20 {
   zoom: var(--tv-px-scale, 1);
 }
 /* On the TV the app is always full screen, and a track's actions are in the
    Now Playing menu; the player's own fullscreen and "More options" buttons
    (a desktop context menu) are left out. */
-.tv-mode .tv-video button[title="Fullscreen"],
-.tv-mode .tv-video button[title="Exit fullscreen"],
-.tv-mode .tv-video button[title="More options"] {
+.tv-mode [data-tv-video] button[title="Fullscreen"],
+.tv-mode [data-tv-video] button[title="Exit fullscreen"],
+.tv-mode [data-tv-video] button[title="More options"] {
   display: none;
 }
 
 /* The full-screen video keeps only what a remote needs: like, previous,
    play/pause, next and quality. Shuffle, repeat and the rest live in Now
    Playing; Back minimizes. */
-.tv-mode .tv-video button[title="Shuffle"],
-.tv-mode .tv-video button[title="Repeat"],
-.tv-mode .tv-video button[title="Minimize video"],
-.tv-mode .tv-video .group\/vol {
+.tv-mode [data-tv-video] button[title="Shuffle"],
+.tv-mode [data-tv-video] button[title="Repeat"],
+.tv-mode [data-tv-video] button[title="Minimize video"],
+.tv-mode [data-tv-video] .group\/vol {
   display: none;
 }
 
 /* Minimized, the video plays on in Now Playing where the cover would be
    (placed by useTvMiniVideo), without its controls. */
-.tv-mode .tv-video.tv-video-mini {
+.tv-mode [data-tv-video][data-tv-video-mini] {
   display: flex !important;
   inset: auto;
   left: var(--tv-mini-x);
@@ -156,6 +156,24 @@ html.tv-mode {
   overflow: hidden;
   pointer-events: none;
 }
-.tv-mode .tv-video.tv-video-mini > :not(video) {
+.tv-mode [data-tv-video][data-tv-video-mini] > :not(video) {
   display: none !important;
+}
+
+/* Minimized and not shown in Now Playing, the player stays rendered (a
+   tiny, transparent box behind the interface) instead of display:none.
+   WebKitGTK stops drawing video frames for a hidden element and does not
+   always pick up again when it is shown, which froze the picture in Now
+   Playing while the sound played on. */
+.tv-mode [data-tv-video].hidden:not([data-tv-video-mini]) {
+  display: flex !important;
+  inset: auto;
+  left: 0;
+  top: 0;
+  width: 4px;
+  height: 4px;
+  opacity: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
 }

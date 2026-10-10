@@ -260,6 +260,21 @@ export default function TvApp() {
       win.setFullscreen(false).catch(() => {});
     };
   }, []);
+  // Mark the video player as soon as it mounts: its buttons become
+  // reachable with the arrows and the TV styles apply (scaled controls,
+  // desktop-only buttons hidden, never display:none while minimized).
+  useLayoutEffect(() => {
+    if (!currentVideo) return;
+    const dialog = document
+      .querySelector("[role='dialog'] video")
+      ?.closest<HTMLElement>("[role='dialog']");
+    if (!dialog) return;
+    // Attributes, not classes: React rewrites the dialog's className
+    // whenever the player re-renders, but leaves attributes it never set.
+    dialog.setAttribute("data-tv-native", "");
+    dialog.setAttribute("data-tv-video", "");
+  }, [currentVideo]);
+
   // The video player drops window fullscreen when its own fullscreen ends;
   // TV mode always wants it back.
   useEffect(() => {
@@ -465,11 +480,6 @@ export default function TvApp() {
           "[role='dialog'] video",
         );
         const dialog = video?.closest<HTMLElement>("[role='dialog']") ?? null;
-        if (dialog && !dialog.hasAttribute("data-tv-native")) {
-          // Its buttons become reachable with the arrows, scaled for a TV.
-          dialog.setAttribute("data-tv-native", "");
-          dialog.classList.add("tv-video");
-        }
         if (video) {
           wakeX = (wakeX + 1) % 1000;
           video.dispatchEvent(

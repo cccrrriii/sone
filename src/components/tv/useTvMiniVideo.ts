@@ -33,7 +33,10 @@ export function useTvMiniVideo(
       dialog.style.setProperty("--tv-mini-h", `${r.height}px`);
     };
     place();
-    dialog.classList.add("tv-video", "tv-video-mini");
+    // An attribute, not a class: React rewrites the dialog's className on
+    // every player re-render (e.g. when its controls fade out).
+    dialog.setAttribute("data-tv-video", "");
+    dialog.setAttribute("data-tv-video-mini", "");
 
     const resize = new ResizeObserver(place);
     resize.observe(el);
@@ -41,7 +44,7 @@ export function useTvMiniVideo(
     scrollEl?.addEventListener("scroll", place, { passive: true });
     window.addEventListener("resize", place);
     return () => {
-      dialog.classList.remove("tv-video-mini");
+      dialog.removeAttribute("data-tv-video-mini");
       resize.disconnect();
       scrollEl?.removeEventListener("scroll", place);
       window.removeEventListener("resize", place);
