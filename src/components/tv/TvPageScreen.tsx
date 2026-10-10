@@ -9,7 +9,7 @@ import { useTvLoader } from "./useTvLoader";
  * A TIDAL page by its API path, the TV counterpart of the desktop's Explore,
  * Explore sub-pages and "View all" pages:
  * - `all` (a home row's "View all"): every item as one grid.
- * - A page of nothing but links (genres, moods, decades): one grid of links.
+ * - A page that is a single list of links: one grid of links.
  * - Otherwise each section as a row, with its own "View all" when TIDAL has
  *   more than the row shows.
  */
@@ -36,7 +36,13 @@ export default function TvPageScreen({
       ...sectionEntries(section.items, section.sectionType),
     }))
     .filter((s) => s.entries.length > 0);
-  const flat = all || sections.every((s) => s.entries.every(isLink));
+  // One grid for "View all", and for a page that is a single list of links
+  // (a genre's sub-pages); titled link sections (Genres, Moods, Decades)
+  // stay rows of their own, as on the desktop.
+  const flat =
+    all ||
+    (sections.every((s) => s.entries.every(isLink)) &&
+      sections.filter((s) => s.section.title).length <= 1);
 
   return (
     <div className="pt-[2.5rem] pb-[3rem]">

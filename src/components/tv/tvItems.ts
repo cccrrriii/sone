@@ -171,12 +171,15 @@ function toTvEntry(item: any, sectionType?: string): TvEntry | null {
   }
 
   // Explore links (genres, moods, decades, shortcuts) lead to another page.
+  // They have no artwork (an `icon` is a small glyph, not a cover), so they
+  // show as tiles carrying their name.
   if (item.apiPath && item.uuid == null && item.id == null) {
+    if (!title) return null;
     return {
       key: `link:${item.apiPath}`,
       title,
       subtitle: "",
-      image: typeof item.icon === "string" ? item.icon : "",
+      image: "",
       icon: "link",
       action: {
         kind: "open",

@@ -455,25 +455,51 @@ export default function TvApp() {
       if (e.ctrlKey || e.altKey || e.metaKey) return;
 
       if (store.get(currentVideoAtom) && store.get(videoExpandedAtom)) {
-        // The video player owns the screen. Enter pauses and resumes,
-        // Left/Right skip 10 seconds, Back returns to Now Playing with the
-        // video still playing (Escape closes it, through the player itself).
-        // Any key shows the player's controls for a moment.
+        // The video player owns the screen. Without a control focused,
+        // Enter pauses and resumes, Left/Right skip 10 seconds and Up/Down
+        // move into the player's buttons; there the arrows move between
+        // them and Back leaves them again. Back otherwise returns to Now
+        // Playing with the video still playing (Escape closes it, through
+        // the player itself). Any key shows the controls for a moment.
         const video = document.querySelector<HTMLVideoElement>(
           "[role='dialog'] video",
         );
+        const dialog = video?.closest<HTMLElement>("[role='dialog']") ?? null;
+        if (dialog && !dialog.hasAttribute("data-tv-native")) {
+          // Its buttons become reachable with the arrows, scaled for a TV.
+          dialog.setAttribute("data-tv-native", "");
+          dialog.classList.add("tv-video");
+        }
         if (video) {
           wakeX = (wakeX + 1) % 1000;
           video.dispatchEvent(
             new MouseEvent("mousemove", { bubbles: true, clientX: wakeX }),
           );
         }
-        switch (e.key) {
-          case "Backspace":
-          case "BrowserBack":
+        const active = document.activeElement;
+        const inControls =
+          !!dialog &&
+          active instanceof HTMLButtonElement &&
+          dialog.contains(active);
+        const dir = ARROWS[e.key];
+
+        if (e.key === "Backspace" || e.key === "BrowserBack") {
+          e.preventDefault();
+          if (inControls) active.blur();
+          else store.set(videoExpandedAtom, false);
+          return;
+        }
+        if (inControls) {
+          // Enter clicks the focused button natively.
+          if (dir && dialog) {
             e.preventDefault();
-            store.set(videoExpandedAtom, false);
-            return;
+            if (!moveFocus(dialog, dir) && (dir === "up" || dir === "down")) {
+              active.blur();
+            }
+          }
+          return;
+        }
+        switch (e.key) {
           case "Enter":
           case " ":
           case "MediaPlayPause":
@@ -491,6 +517,18 @@ export default function TvApp() {
               Math.max(0, video.currentTime + step),
               Math.max(0, video.duration - 0.5),
             );
+            return;
+          }
+          case "ArrowUp":
+          case "ArrowDown": {
+            e.preventDefault();
+            if (!dialog) return;
+            // Start on play/pause, the button right after "Previous".
+            const play = dialog.querySelector<HTMLElement>(
+              "button[title='Previous'] + button",
+            );
+            if (play) focusElement(play);
+            else focusFirstIn(dialog);
             return;
           }
         }

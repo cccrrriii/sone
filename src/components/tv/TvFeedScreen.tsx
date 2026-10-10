@@ -5,12 +5,14 @@ import { authTokensAtom } from "../../atoms/auth";
 import { feedUnseenCountAtom } from "../../atoms/ui";
 import { groupFeedByPeriod } from "../../lib/feedGrouping";
 import { useTvInitialFocus } from "./TvNavContext";
-import { TvError, TvRow, TvSpinner } from "./TvParts";
+import { TvError, TvGrid, TvSpinner } from "./TvParts";
 import { feedEntries } from "./tvItems";
 import { useTvLoader } from "./useTvLoader";
 
-/** New releases from followed artists and history mixes, a row per period
- *  ("This month", "Last month", "Older"), as on the desktop Feed page. */
+/** New releases from followed artists and history mixes, grouped by period
+ *  ("This month", "Last month", "Older") as on the desktop Feed page. Each
+ *  group is a grid, so everything TIDAL returns is in view by scrolling
+ *  down rather than hidden at the end of a long row. */
 export default function TvFeedScreen() {
   const userId = useAtomValue(authTokensAtom)?.user_id;
   const setUnseenCount = useSetAtom(feedUnseenCountAtom);
@@ -51,7 +53,16 @@ export default function TvFeedScreen() {
         </p>
       ) : (
         groups.map((g) => (
-          <TvRow key={g.label} title={g.label} entries={g.entries} />
+          <section key={g.label} className="mb-[1.5rem]">
+            <h2 className="text-[1.05rem] font-bold text-th-text-primary mb-[0.2rem] px-[3rem]">
+              {g.label}
+            </h2>
+            <TvGrid
+              entries={g.entries}
+              queueId={`feed:${g.label}`}
+              name="Feed"
+            />
+          </section>
         ))
       )}
     </div>

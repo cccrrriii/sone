@@ -117,3 +117,9 @@ html.tv-mode {
 .tv-mode .sone-toasts {
   zoom: var(--tv-px-scale, 1);
 }
+
+/* The video player's control bars are sized in px for the desktop; scale
+   them up on a TV (the class is set when the remote first reaches it). */
+.tv-mode .tv-video > .z-20 {
+  zoom: var(--tv-px-scale, 1);
+}
