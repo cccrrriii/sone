@@ -10,6 +10,8 @@ import {
 import { useAtomValue, useSetAtom, useStore } from "jotai";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  Bell,
+  Compass,
   Disc3,
   Home,
   Library,
@@ -24,6 +26,7 @@ import VideoPlayer from "../VideoPlayer";
 import ProxyNoticeBanner from "../ProxyNoticeBanner";
 import SettingsSheet from "../settings/SettingsSheet";
 import { tvModeAtom } from "../../atoms/tv";
+import { feedUnseenCountAtom } from "../../atoms/ui";
 import { currentTrackAtom, isPlayingAtom } from "../../atoms/playback";
 import {
   currentVideoAtom,
@@ -51,16 +54,27 @@ import TvNowPlaying from "./TvNowPlaying";
 import TvTrackListScreen from "./TvTrackListScreen";
 import TvArtistScreen from "./TvArtistScreen";
 import TvSettings from "./TvSettings";
+import TvPageScreen from "./TvPageScreen";
+import TvFeedScreen from "./TvFeedScreen";
 import TvNativeLayer from "./TvNativeLayer";
 import TvMenuHost, { type TvMenuHostHandle } from "./TvMenuHost";
 import { menuForElement } from "./tvMenu";
 import "./tv.css";
 
-type RootType = "home" | "search" | "collection" | "nowPlaying" | "settings";
+type RootType =
+  | "home"
+  | "search"
+  | "explore"
+  | "feed"
+  | "collection"
+  | "nowPlaying"
+  | "settings";
 
 const RAIL: { type: RootType; label: string; icon: typeof Home }[] = [
   { type: "home", label: "Home", icon: Home },
   { type: "search", label: "Search", icon: Search },
+  { type: "explore", label: "Explore", icon: Compass },
+  { type: "feed", label: "Feed", icon: Bell },
   { type: "collection", label: "My Collection", icon: Library },
   { type: "nowPlaying", label: "Now Playing", icon: Disc3 },
   { type: "settings", label: "Settings", icon: Settings },
@@ -81,6 +95,8 @@ const ARROWS: Record<string, Direction> = {
 
 const BACK_KEYS = new Set(["Escape", "BrowserBack", "GoBack"]);
 const CURSOR_HIDE_MS = 2500;
+/** How far Left/Right skip in a video, in seconds. */
+const VIDEO_SKIP_S = 10;
 
 interface Entry {
   id: number;
@@ -115,6 +131,18 @@ function renderScreen(view: TvView): ReactNode {
       return <TvNowPlaying />;
     case "settings":
       return <TvSettings />;
+    case "explore":
+      return <TvPageScreen title="Explore" apiPath="pages/explore" />;
+    case "feed":
+      return <TvFeedScreen />;
+    case "page":
+      return (
+        <TvPageScreen
+          title={view.title}
+          apiPath={view.apiPath}
+          all={view.all}
+        />
+      );
     case "artist":
       return <TvArtistScreen view={view} />;
     case "album":
@@ -190,6 +218,7 @@ export default function TvApp() {
   const videoExpanded = useAtomValue(videoExpandedAtom);
   const videoFullscreen = useAtomValue(videoFullscreenAtom);
   const overlayShowing = !!currentVideo && videoExpanded;
+  const feedUnseen = useAtomValue(feedUnseenCountAtom);
   const { playFromSource, togglePlayPause, playNext, playPrevious } =
     usePlaybackActions();
   const playMedia = useMediaPlay();
@@ -240,10 +269,13 @@ export default function TvApp() {
         .catch(() => {});
   }, [videoFullscreen]);
 
-  // Hide the pointer until the mouse moves.
+  // Hide the pointer until the mouse moves. Set on the document, so it also
+  // covers the video player, which sits outside the TV interface. Synthetic
+  // moves (sent to wake the video controls from the remote) don't count.
   useEffect(() => {
     let timer = setTimeout(() => setCursorHidden(true), CURSOR_HIDE_MS);
-    const onMove = () => {
+    const onMove = (e: MouseEvent) => {
+      if (!e.isTrusted) return;
       setCursorHidden(false);
       clearTimeout(timer);
       timer = setTimeout(() => setCursorHidden(true), CURSOR_HIDE_MS);
@@ -254,6 +286,11 @@ export default function TvApp() {
       window.removeEventListener("mousemove", onMove);
     };
   }, []);
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle("tv-cursor-hidden", cursorHidden);
+    return () => root.classList.remove("tv-cursor-hidden");
+  }, [cursorHidden]);
 
   useEffect(() => {
     const onFocusIn = (e: FocusEvent) => {
@@ -382,7 +419,7 @@ export default function TvApp() {
       showNowPlaying,
       playTrack,
       openMenu: (spec) => menuRef.current?.open(spec),
-      trackMenu: (track) => menuRef.current!.trackMenu(track),
+      trackMenu: (track, extra) => menuRef.current!.trackMenu(track, extra),
       mediaMenu: (item) => menuRef.current!.mediaMenu(item),
       openMoreSettings,
     }),
@@ -400,6 +437,9 @@ export default function TvApp() {
     // Long-pressing Enter on an item that has an action menu opens the
     // menu; a short press activates the item as usual.
     let held: { el: HTMLElement; timer: number; fired: boolean } | null = null;
+    // Pointer x of the synthetic moves that wake the video controls; it must
+    // change each time, as the player ignores a move to the same spot.
+    let wakeX = 0;
     // Set by an arrow move until the screen has been drawn after it.
     let moveDrawing = false;
 
@@ -415,11 +455,44 @@ export default function TvApp() {
       if (e.ctrlKey || e.altKey || e.metaKey) return;
 
       if (store.get(currentVideoAtom) && store.get(videoExpandedAtom)) {
-        // The video player owns the screen; Back returns to Now Playing
-        // with the video still playing.
-        if (e.key === "Backspace" || e.key === "BrowserBack") {
-          e.preventDefault();
-          store.set(videoExpandedAtom, false);
+        // The video player owns the screen. Enter pauses and resumes,
+        // Left/Right skip 10 seconds, Back returns to Now Playing with the
+        // video still playing (Escape closes it, through the player itself).
+        // Any key shows the player's controls for a moment.
+        const video = document.querySelector<HTMLVideoElement>(
+          "[role='dialog'] video",
+        );
+        if (video) {
+          wakeX = (wakeX + 1) % 1000;
+          video.dispatchEvent(
+            new MouseEvent("mousemove", { bubbles: true, clientX: wakeX }),
+          );
+        }
+        switch (e.key) {
+          case "Backspace":
+          case "BrowserBack":
+            e.preventDefault();
+            store.set(videoExpandedAtom, false);
+            return;
+          case "Enter":
+          case " ":
+          case "MediaPlayPause":
+            e.preventDefault();
+            if (!video || e.repeat) return;
+            if (video.paused) video.play().catch(() => {});
+            else video.pause();
+            return;
+          case "ArrowLeft":
+          case "ArrowRight": {
+            e.preventDefault();
+            if (!video || !Number.isFinite(video.duration)) return;
+            const step = e.key === "ArrowLeft" ? -VIDEO_SKIP_S : VIDEO_SKIP_S;
+            video.currentTime = Math.min(
+              Math.max(0, video.currentTime + step),
+              Math.max(0, video.duration - 0.5),
+            );
+            return;
+          }
         }
         return;
       }
@@ -552,8 +625,8 @@ export default function TvApp() {
       <div
         ref={rootRef}
         className={`tv-root relative flex flex-col h-full w-full bg-th-base text-th-text-primary overflow-hidden ${
-          cursorHidden ? "tv-cursor-hidden" : ""
-        } ${overlayShowing ? "hidden" : ""}`}
+          overlayShowing ? "hidden" : ""
+        }`}
       >
         <ProxyNoticeBanner />
         <div className="relative flex-1 min-h-0">
@@ -577,7 +650,12 @@ export default function TvApp() {
                     : "text-th-text-secondary"
                 }`}
               >
-                <Icon className="w-[1.3rem] h-[1.3rem] shrink-0" />
+                <span className="relative shrink-0">
+                  <Icon className="w-[1.3rem] h-[1.3rem]" />
+                  {type === "feed" && feedUnseen > 0 && (
+                    <span className="absolute -top-[0.15rem] -right-[0.15rem] w-[0.5rem] h-[0.5rem] rounded-full bg-th-accent" />
+                  )}
+                </span>
                 <span className="tv-rail-label whitespace-nowrap text-[0.85rem] font-semibold">
                   {label}
                 </span>

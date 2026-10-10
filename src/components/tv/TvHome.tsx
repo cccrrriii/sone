@@ -68,6 +68,16 @@ export default function TvHome() {
             entries={entries}
             queueTracks={tracks}
             queueId={`home:${section.title}`}
+            viewAll={
+              section.hasMore && section.apiPath
+                ? {
+                    type: "page",
+                    title: section.title,
+                    apiPath: section.apiPath,
+                    all: true,
+                  }
+                : undefined
+            }
           />
         );
       })}

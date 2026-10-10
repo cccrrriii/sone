@@ -3,6 +3,7 @@ import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
 import {
   ChevronDown,
   Heart,
+  ListX,
   Mic2,
   MoreHorizontal,
   Volume1,
@@ -15,6 +16,7 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
+  Trash2,
   Tv,
 } from "lucide-react";
 import TidalImage from "../TidalImage";
@@ -45,7 +47,8 @@ import {
   trackCoverId,
 } from "../../utils/itemHelpers";
 import { TvScreenContext, useTvInitialFocus, useTvNav } from "./TvNavContext";
-import { focusFirstIn } from "../../lib/spatialNav";
+import { focusElement, focusFirstIn } from "../../lib/spatialNav";
+import { useToast } from "../../contexts/ToastContext";
 import { TvButton, TvTrackRow } from "./TvParts";
 import { TvLyricsPanel } from "./TvLyrics";
 import { useTvLyrics } from "./useTvLyrics";
@@ -247,10 +250,31 @@ export default function TvNowPlaying() {
     playPrevious,
     toggleShuffle,
     playFromQueue,
+    removeFromQueue,
+    clearQueue,
   } = usePlaybackActions();
+  const { showToast } = useToast();
 
   useTvInitialFocus(true);
   const screen = useContext(TvScreenContext);
+  const upNextRef = useRef<HTMLElement>(null);
+  // After a row leaves the list, focus the row that took its place (or the
+  // player, when the list is now empty).
+  const refocusUpNext = (index: number) =>
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const rows =
+          upNextRef.current?.querySelectorAll<HTMLElement>(
+            "[data-tv-has-menu]",
+          ) ?? [];
+        const next = rows[Math.min(index, rows.length - 1)];
+        if (next) focusElement(next);
+        else {
+          const el = screen.element();
+          if (el) focusFirstIn(el);
+        }
+      }),
+    );
 
   if (!track) {
     return (
@@ -493,7 +517,10 @@ export default function TvNowPlaying() {
       </div>
 
       {upNext.length > 0 && (
-        <section className="relative px-[3rem] pt-[1.5rem] pb-[3rem]">
+        <section
+          ref={upNextRef}
+          className="relative px-[3rem] pt-[1.5rem] pb-[3rem]"
+        >
           <h2 className="text-[1.05rem] font-bold text-th-text-primary px-[1rem] mb-[0.4rem]">
             Up next
           </h2>
@@ -503,6 +530,25 @@ export default function TvNowPlaying() {
               track={t}
               index={i}
               showCover
+              menuExtra={[
+                {
+                  label: "Remove from queue",
+                  icon: ListX,
+                  onSelect: () => {
+                    removeFromQueue(i);
+                    refocusUpNext(i);
+                  },
+                },
+                {
+                  label: "Clear queue",
+                  icon: Trash2,
+                  onSelect: () => {
+                    clearQueue();
+                    showToast("Queue cleared");
+                    refocusUpNext(0);
+                  },
+                },
+              ]}
               onSelect={() => {
                 void playFromQueue(i);
                 // The row just played leaves the list; go back up to the

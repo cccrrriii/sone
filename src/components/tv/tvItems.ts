@@ -1,4 +1,4 @@
-import type { MediaItemType, Track } from "../../types";
+import type { FeedItem, MediaItemType, Track } from "../../types";
 import { getTidalImageUrl, getTidalPromoImageUrl } from "../../types";
 import {
   buildMediaItem,
@@ -11,7 +11,7 @@ import {
   isTrackItem,
 } from "../../utils/itemHelpers";
 
-/** A screen of the TV interface. The first four are the rail's roots. */
+/** A screen of the TV interface. The rail's roots come first. */
 export type TvView =
   | { type: "home" }
   | { type: "settings" }
@@ -19,6 +19,11 @@ export type TvView =
   | { type: "collection" }
   | { type: "nowPlaying" }
   | { type: "favorites" }
+  | { type: "explore" }
+  | { type: "feed" }
+  /** A TIDAL page by its API path: an Explore genre, mood or shortcut, or
+   *  (with `all`) every item of a home row behind "View all". */
+  | { type: "page"; title: string; apiPath: string; all?: boolean }
   | { type: "album"; id: number; title?: string; image?: string }
   | { type: "playlist"; uuid: string; title?: string; image?: string }
   | { type: "mix"; mixId: string; title?: string; image?: string }
@@ -35,8 +40,9 @@ export interface TvEntry {
   subtitle: string;
   image: string;
   round?: boolean;
-  /** Drawn in place of artwork when the entry has none (My Tracks). */
-  icon?: "heart";
+  /** Drawn in place of artwork when the entry has none: the heart for My
+   *  Tracks, a labelled tile for page links (genres, moods, "View all"). */
+  icon?: "heart" | "link" | "more";
   /** What the action menu acts on, for cards that have one. */
   media?: MediaItemType;
   action: TvAction;
@@ -164,6 +170,21 @@ function toTvEntry(item: any, sectionType?: string): TvEntry | null {
     }
   }
 
+  // Explore links (genres, moods, decades, shortcuts) lead to another page.
+  if (item.apiPath && item.uuid == null && item.id == null) {
+    return {
+      key: `link:${item.apiPath}`,
+      title,
+      subtitle: "",
+      image: typeof item.icon === "string" ? item.icon : "",
+      icon: "link",
+      action: {
+        kind: "open",
+        view: { type: "page", title, apiPath: item.apiPath },
+      },
+    };
+  }
+
   const media = buildMediaItem(item, sectionType);
   if (media) {
     return {
@@ -213,4 +234,22 @@ export function sectionEntries(
     if (entry.action.kind === "playTrack") tracks.push(entry.action.track);
   }
   return { entries, tracks };
+}
+
+/** Feed entries (new releases from followed artists, history mixes) as
+ *  cards; entries of an unknown kind are left out, as on the desktop. */
+export function feedEntries(items: FeedItem[]): TvEntry[] {
+  const entries: TvEntry[] = [];
+  const seen = new Set<string>();
+  for (const f of items) {
+    if (f.kind === "unknown") continue;
+    const entry = toTvEntry(
+      f.item,
+      f.kind === "mix" ? "MIX_LIST" : "ALBUM_LIST",
+    );
+    if (!entry || seen.has(entry.key)) continue;
+    seen.add(entry.key);
+    entries.push(entry);
+  }
+  return entries;
 }

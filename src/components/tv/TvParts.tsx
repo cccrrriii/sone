@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useAtomValue } from "jotai";
-import { Heart, MoreHorizontal } from "lucide-react";
+import { ChevronRight, Compass, Heart, MoreHorizontal } from "lucide-react";
 import TidalImage from "../TidalImage";
 import { currentTrackAtom, isPlayingAtom } from "../../atoms/playback";
 import { formatTime } from "../../lib/format";
@@ -8,9 +8,9 @@ import { isTrackUnavailable } from "../../lib/trackAvailability";
 import type { Track } from "../../types";
 import { getTidalImageUrl } from "../../types";
 import { getTrackArtistDisplay, trackCoverId } from "../../utils/itemHelpers";
-import { useTvNav } from "./TvNavContext";
-import type { TvEntry } from "./tvItems";
-import { tvMenuRef, type TvMenuSpec } from "./tvMenu";
+import { type TvNav, useTvNav } from "./TvNavContext";
+import type { TvEntry, TvView } from "./tvItems";
+import { tvMenuRef, type TvMenuItem, type TvMenuSpec } from "./tvMenu";
 
 function TvCard({
   entry,
@@ -24,6 +24,8 @@ function TvCard({
   /** Action menu, opened by holding Enter or the Menu key. */
   menu?: () => TvMenuSpec;
 }) {
+  // A page link without artwork carries its name on the tile itself.
+  const textTile = !entry.image && entry.icon === "link";
   return (
     <button
       data-tv-focusable
@@ -35,11 +37,22 @@ function TvCard({
       <div
         className={`tv-card-art overflow-hidden bg-th-surface ${
           entry.round ? "rounded-full" : "rounded-[0.6rem]"
-        } ${wide ? "aspect-[11/8]" : "aspect-square"}`}
+        } ${wide ? "aspect-[11/8]" : textTile ? "aspect-[3/2]" : "aspect-square"}`}
       >
         {!entry.image && entry.icon === "heart" ? (
           <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-th-accent to-th-surface">
             <Heart className="w-[38%] h-[38%] text-white" fill="currentColor" />
+          </div>
+        ) : textTile ? (
+          <div className="w-full h-full flex flex-col justify-end p-[0.8rem] bg-gradient-to-br from-th-accent/70 to-th-surface">
+            <Compass className="w-[1.4rem] h-[1.4rem] text-white/80 mb-auto" />
+            <span className="text-[0.95rem] font-extrabold leading-tight text-white line-clamp-3">
+              {entry.title}
+            </span>
+          </div>
+        ) : entry.icon === "more" ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-[0.5rem] bg-th-surface text-th-text-secondary">
+            <ChevronRight className="w-[2.4rem] h-[2.4rem]" />
           </div>
         ) : (
           <TidalImage
@@ -50,19 +63,68 @@ function TvCard({
           />
         )}
       </div>
-      <div
-        className={`mt-[0.6rem] px-[0.15rem] ${entry.round ? "text-center" : ""}`}
-      >
-        <div className="text-[0.8rem] font-semibold text-th-text-primary truncate">
-          {entry.title}
-        </div>
-        {entry.subtitle && (
-          <div className="text-[0.65rem] text-th-text-muted truncate">
-            {entry.subtitle}
+      {!textTile && (
+        <div
+          className={`mt-[0.6rem] px-[0.15rem] ${entry.round ? "text-center" : ""}`}
+        >
+          <div className="text-[0.8rem] font-semibold text-th-text-primary truncate">
+            {entry.title}
           </div>
-        )}
-      </div>
+          {entry.subtitle && (
+            <div className="text-[0.65rem] text-th-text-muted truncate">
+              {entry.subtitle}
+            </div>
+          )}
+        </div>
+      )}
     </button>
+  );
+}
+
+/** The action menu of a card: a track's, or a media item's. */
+function cardMenu(nav: TvNav, entry: TvEntry): (() => TvMenuSpec) | undefined {
+  const action = entry.action;
+  if (action.kind === "playTrack") return () => nav.trackMenu(action.track);
+  const media = entry.media;
+  return media ? () => nav.mediaMenu(media) : undefined;
+}
+
+/** Every entry as a wrapping grid of cards (a "View all" page, a list of
+ *  genres). The grid remembers the card it was left on. */
+export function TvGrid({
+  entries,
+  queueTracks,
+  queueId,
+  name,
+}: {
+  entries: TvEntry[];
+  queueTracks?: Track[];
+  queueId: string;
+  name: string;
+}) {
+  const nav = useTvNav();
+  const wide = entries.every((e) => e.key.startsWith("promo:"));
+  return (
+    <div
+      data-tv-remember
+      className="flex flex-wrap gap-x-[1.1rem] gap-y-[1.4rem] px-[3rem] py-[0.8rem]"
+    >
+      {entries.map((entry) => (
+        <TvCard
+          key={entry.key}
+          entry={entry}
+          wide={wide}
+          menu={cardMenu(nav, entry)}
+          onSelect={() =>
+            nav.run(entry.action, {
+              tracks: queueTracks ?? [],
+              name,
+              id: queueId,
+            })
+          }
+        />
+      ))}
+    </div>
   );
 }
 
@@ -73,15 +135,31 @@ export function TvRow({
   entries,
   queueTracks,
   queueId,
+  viewAll,
 }: {
   title: string;
   entries: TvEntry[];
   queueTracks?: Track[];
   queueId?: string;
+  /** Where a "View all" card at the end of the row leads. */
+  viewAll?: TvView;
 }) {
   const nav = useTvNav();
   if (entries.length === 0) return null;
   const wide = entries.every((e) => e.key.startsWith("promo:"));
+  const shown: TvEntry[] = viewAll
+    ? [
+        ...entries,
+        {
+          key: "view-all",
+          title: "View all",
+          subtitle: "",
+          image: "",
+          icon: "more",
+          action: { kind: "open", view: viewAll },
+        },
+      ]
+    : entries;
   return (
     <section className="mb-[1.2rem]">
       <h2 className="text-[1.05rem] font-bold text-th-text-primary mb-[0.2rem] px-[3rem]">
@@ -91,22 +169,12 @@ export function TvRow({
         data-tv-remember
         className="tv-row flex gap-[1.1rem] overflow-x-auto px-[3rem] py-[0.8rem]"
       >
-        {entries.map((entry) => (
+        {shown.map((entry) => (
           <TvCard
             key={entry.key}
             entry={entry}
             wide={wide}
-            menu={
-              entry.action.kind === "playTrack"
-                ? () =>
-                    nav.trackMenu(
-                      (entry.action as { kind: "playTrack"; track: Track })
-                        .track,
-                    )
-                : entry.media
-                  ? () => nav.mediaMenu(entry.media!)
-                  : undefined
-            }
+            menu={cardMenu(nav, entry)}
             onSelect={() =>
               nav.run(entry.action, {
                 tracks: queueTracks ?? [],
@@ -184,6 +252,7 @@ export function TvTrackRow({
   index,
   showCover,
   entry,
+  menuExtra,
   onSelect,
 }: {
   track: Track;
@@ -191,6 +260,8 @@ export function TvTrackRow({
   showCover?: boolean;
   /** Where focus lands when the list is entered for the first time. */
   entry?: boolean;
+  /** Extra action-menu entries for where the row is listed. */
+  menuExtra?: TvMenuItem[];
   onSelect: () => void;
 }) {
   const nav = useTvNav();
@@ -198,7 +269,7 @@ export function TvTrackRow({
   const playing = useAtomValue(isPlayingAtom);
   const isCurrent = current?.id === track.id;
   const unavailable = isTrackUnavailable(track);
-  const menu = () => nav.trackMenu(track);
+  const menu = () => nav.trackMenu(track, menuExtra);
   return (
     <div className="tv-track-row flex items-center gap-[0.4rem]">
       <button

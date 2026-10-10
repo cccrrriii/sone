@@ -31,5 +31,10 @@ export function useTvLoader<T>(load: () => Promise<T>, failure: string) {
     setAttempt((a) => a + 1);
   }, []);
 
-  return { ...state, retry };
+  /** Change the loaded data in place (after removing a row, say). */
+  const update = useCallback((change: (data: T) => T) => {
+    setState((s) => (s.data === null ? s : { ...s, data: change(s.data) }));
+  }, []);
+
+  return { ...state, retry, update };
 }

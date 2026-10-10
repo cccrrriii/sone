@@ -1,6 +1,7 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
+import { focusElement } from "../../lib/spatialNav";
 import { useAtomValue } from "jotai";
-import { Heart, MoreHorizontal, Play, Shuffle } from "lucide-react";
+import { Heart, ListX, MoreHorizontal, Play, Shuffle } from "lucide-react";
 import {
   getAlbumPage,
   getFavoriteTracks,
@@ -11,6 +12,8 @@ import {
 import { authTokensAtom } from "../../atoms/auth";
 import { usePlaybackActions } from "../../hooks/usePlaybackActions";
 import { useFavorites } from "../../hooks/useFavorites";
+import { usePlaylists } from "../../hooks/usePlaylists";
+import { useToast } from "../../contexts/ToastContext";
 import { isTrackUnavailable } from "../../lib/trackAvailability";
 import type { AlbumDetail, MediaItemType, Playlist, Track } from "../../types";
 import { getTidalImageUrl } from "../../types";
@@ -165,7 +168,13 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
   const { playAllFromSource, setShuffledQueue, playTrack } =
     usePlaybackActions();
   const load = useCallback(() => loadList(view, userId), [view, userId]);
-  const { data, error, retry } = useTvLoader(load, "Couldn't load tracks");
+  const { data, error, retry, update } = useTvLoader(
+    load,
+    "Couldn't load tracks",
+  );
+  const { removeTrackFromPlaylist } = usePlaylists();
+  const listRef = useRef<HTMLDivElement>(null);
+  const { showToast } = useToast();
 
   useTvInitialFocus(data !== null || error !== null);
 
@@ -233,6 +242,39 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
             : null;
     run?.catch(() => {});
   };
+  // Same rule as the desktop: only the user's own playlists are editable.
+  const ownPlaylist =
+    view.type === "playlist" &&
+    userId != null &&
+    data.playlist?.creator?.id === userId;
+  const removeFromPlaylist = async (index: number) => {
+    if (view.type !== "playlist") return;
+    const track = data.tracks[index];
+    try {
+      await removeTrackFromPlaylist(view.uuid, index);
+      update((d) => ({
+        ...d,
+        tracks: d.tracks.filter((_, i) => i !== index),
+      }));
+      // The removed row had focus: move it to the row that took its place
+      // (or the new last one), once the menu has closed and the list has
+      // re-rendered.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          const rows =
+            listRef.current?.querySelectorAll<HTMLElement>(
+              "[data-tv-has-menu]",
+            ) ?? [];
+          const next = rows[Math.min(index, rows.length - 1)];
+          if (next) focusElement(next);
+        }),
+      );
+      showToast(`Removed "${track?.title ?? "track"}" from playlist`);
+    } catch {
+      showToast("Failed to remove track", "error");
+    }
+  };
+
   const totalSecs = data.tracks.reduce((s, t) => s + (t.duration ?? 0), 0);
 
   // Same as the desktop pages: Play follows the shuffle setting, Shuffle is
@@ -359,6 +401,7 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
         </div>
       </aside>
       <div
+        ref={listRef}
         data-tv-remember
         data-tv-scroll-root
         className="tv-scroll flex-1 min-w-0 h-full overflow-y-auto pl-[0.5rem] pr-[2rem] pt-[2.5rem] pb-[3rem]"
@@ -374,6 +417,17 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
               track={track}
               index={i}
               entry={i === 0}
+              menuExtra={
+                ownPlaylist
+                  ? [
+                      {
+                        label: "Remove from this playlist",
+                        icon: ListX,
+                        onSelect: () => removeFromPlaylist(i),
+                      },
+                    ]
+                  : undefined
+              }
               showCover={view.type !== "album"}
               onSelect={() =>
                 nav.playTrack(track, data.tracks, { source, albumMode })

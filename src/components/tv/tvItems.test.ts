@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sectionEntries } from "./tvItems";
+import { feedEntries, sectionEntries } from "./tvItems";
 
 const track = (id: number) => ({
   id,
@@ -68,5 +68,50 @@ describe("sectionEntries", () => {
       kind: "open",
       view: { type: "favorites" },
     });
+  });
+
+  it("turns Explore links into page views", () => {
+    const { entries } = sectionEntries(
+      [{ title: "Jazz", apiPath: "pages/genre_jazz" }],
+      "PAGE_LINKS_CLOUD",
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0].icon).toBe("link");
+    expect(entries[0].action).toEqual({
+      kind: "open",
+      view: { type: "page", title: "Jazz", apiPath: "pages/genre_jazz" },
+    });
+  });
+});
+
+describe("feedEntries", () => {
+  it("keeps albums and mixes and drops unknown kinds", () => {
+    const entries = feedEntries([
+      {
+        kind: "album",
+        activityType: "NEW_ALBUM",
+        occurredAt: "2026-10-01T00:00:00Z",
+        seen: false,
+        item: {
+          id: 7,
+          title: "New",
+          cover: "c",
+          artists: [{ id: 1, name: "A" }],
+        },
+      },
+      {
+        kind: "unknown",
+        activityType: "X",
+        occurredAt: "2026-10-01T00:00:00Z",
+        seen: true,
+        item: { id: 8 },
+      },
+    ]);
+    expect(entries.map((e) => e.action)).toEqual([
+      expect.objectContaining({
+        kind: "open",
+        view: expect.objectContaining({ type: "album", id: 7 }),
+      }),
+    ]);
   });
 });

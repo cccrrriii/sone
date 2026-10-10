@@ -48,7 +48,7 @@ export interface TvMenuHostHandle {
   isOpen: () => boolean;
   /** Back inside the menu: leaves a submenu, or closes the menu. */
   back: () => void;
-  trackMenu: (track: Track) => TvMenuSpec;
+  trackMenu: (track: Track, extra?: TvMenuItem[]) => TvMenuSpec;
   mediaMenu: (item: MediaItemType) => TvMenuSpec;
 }
 
@@ -131,7 +131,7 @@ const TvMenuHost = forwardRef<
   );
 
   const trackMenu = useCallback(
-    (track: Track): TvMenuSpec => {
+    (track: Track, extra: TvMenuItem[] = []): TvMenuSpec => {
       const isVideo = track.itemType === "video";
       const liked = isVideo
         ? false
@@ -230,7 +230,10 @@ const TvMenuHost = forwardRef<
         title: track.title,
         subtitle: getTrackArtistDisplay(track),
         image: getTidalImageUrl(trackCoverId(track), 320),
-        items,
+        // Actions that depend on where the track is listed (remove it from
+        // the queue or from this playlist) come last, away from the entry
+        // that has focus when the menu opens.
+        items: [...items, ...extra],
       };
     },
     [

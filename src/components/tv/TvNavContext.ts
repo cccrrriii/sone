@@ -3,7 +3,7 @@ import { focusFirstIn } from "../../lib/spatialNav";
 import type { MediaItemType, Track } from "../../types";
 import type { usePlaybackActions } from "../../hooks/usePlaybackActions";
 import type { TvAction, TvView } from "./tvItems";
-import type { TvMenuSpec } from "./tvMenu";
+import type { TvMenuItem, TvMenuSpec } from "./tvMenu";
 
 export interface TvNav {
   /** Open a screen on top of the current one; Back returns to it. */
@@ -22,8 +22,9 @@ export interface TvNav {
   ) => void;
   /** Open the action menu (the TV's right-click menu). */
   openMenu: (spec: TvMenuSpec) => void;
-  /** Action menus for a track and for an album / playlist / mix / artist. */
-  trackMenu: (track: Track) => TvMenuSpec;
+  /** Action menus for a track and for an album / playlist / mix / artist.
+   *  `extra` adds actions that depend on where the track is listed. */
+  trackMenu: (track: Track, extra?: TvMenuItem[]) => TvMenuSpec;
   mediaMenu: (item: MediaItemType) => TvMenuSpec;
   /** Open the full desktop settings sheet, navigable with the remote. */
   openMoreSettings: () => void;
