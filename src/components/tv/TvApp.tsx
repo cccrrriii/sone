@@ -400,6 +400,8 @@ export default function TvApp() {
     // Long-pressing Enter on an item that has an action menu opens the
     // menu; a short press activates the item as usual.
     let held: { el: HTMLElement; timer: number; fired: boolean } | null = null;
+    // When the last arrow move finished (performance.now() time base).
+    let lastMoveEnd = 0;
 
     const openMenuFor = (el: Element | null) => {
       const build = menuForElement(el);
@@ -474,6 +476,11 @@ export default function TvApp() {
         }
         e.preventDefault();
         if (!scope) return;
+        // A held arrow repeats faster than a slower machine moves focus down
+        // a long list. Repeats that piled up while the last move ran are
+        // dropped, so focus stops when the key is released instead of
+        // working through the backlog.
+        if (e.repeat && e.timeStamp < lastMoveEnd) return;
         // Focus got lost (its element went away, e.g. a played "Up next"
         // row): pick up in the current screen, not in the hidden rail.
         if (
@@ -486,6 +493,7 @@ export default function TvApp() {
           if (screen && focusFirstIn(screen)) return;
         }
         const moved = moveFocus(scope, dir);
+        lastMoveEnd = performance.now();
         // The action menu slides in from the right; Left leaves it.
         if (!moved && dir === "left" && menuRef.current?.isOpen()) {
           menuRef.current.back();

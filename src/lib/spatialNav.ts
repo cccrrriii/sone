@@ -101,6 +101,18 @@ function isVisible(el: HTMLElement): boolean {
   return r.width > 0 && r.height > 0;
 }
 
+/** Visible focusables in `scope` with their boxes. Reading a box costs real
+ *  time on a long track list, so each one is read once per move. */
+function measure(scope: ParentNode): Map<HTMLElement, DOMRect> {
+  const boxes = new Map<HTMLElement, DOMRect>();
+  for (const el of scope.querySelectorAll<HTMLElement>(FOCUSABLE)) {
+    if ((el as HTMLButtonElement).disabled) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) boxes.set(el, r);
+  }
+  return boxes;
+}
+
 function focusableIn(scope: ParentNode): HTMLElement[] {
   return Array.from(scope.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
     isVisible,
@@ -150,22 +162,30 @@ export function focusElement(el: HTMLElement) {
 
   // Reaching the topmost item of a screen scrolls it all the way up, so the
   // header or first row title above it is not left cut off.
+  // Content runs top to bottom, so only items before it in the document can
+  // lie above it — the scan stops early instead of measuring a whole list.
   const root = el.closest<HTMLElement>("[data-tv-scroll-root]");
   if (root && root.scrollTop > 0) {
     const top = el.getBoundingClientRect().top;
-    const above = focusableIn(root).some(
-      (other) => other !== el && other.getBoundingClientRect().bottom <= top,
-    );
-    if (!above) root.scrollTop = 0;
+    for (const other of root.querySelectorAll<HTMLElement>(FOCUSABLE)) {
+      if (other === el) {
+        root.scrollTop = 0;
+        break;
+      }
+      if (isVisible(other) && other.getBoundingClientRect().bottom <= top) {
+        break;
+      }
+    }
   }
 }
 
 /** Move focus one step within `scope`. Returns false when nothing lies in
  *  that direction, so callers can decide on a fallback. */
 export function moveFocus(scope: HTMLElement, dir: Direction): boolean {
-  const all = focusableIn(scope);
+  const boxes = measure(scope);
+  const all = Array.from(boxes.keys());
   const current = document.activeElement as HTMLElement | null;
-  if (!current || !scope.contains(current) || !all.includes(current)) {
+  if (!current || !scope.contains(current) || !boxes.has(current)) {
     const first = all[0];
     if (!first) return false;
     focusElement(first);
@@ -175,7 +195,7 @@ export function moveFocus(scope: HTMLElement, dir: Direction): boolean {
   // nav rail stays in the rail even though, expanded, it overlaps the cards
   // behind it, while Left/Right at the end of a row falls through to the
   // next group out.
-  const from = current.getBoundingClientRect();
+  const from = boxes.get(current)!;
   // A side panel (`data-tv-side`, the nav rail) is entered sideways only:
   // Up/Down past the top or bottom of the content must not land in it.
   const sideways = dir === "left" || dir === "right";
@@ -185,7 +205,7 @@ export function moveFocus(scope: HTMLElement, dir: Direction): boolean {
   // (the rail) is reachable sideways from anywhere, and leaving it lands on
   // whatever the content last had focused.
   const onLine = (el: HTMLElement) => {
-    const r = el.getBoundingClientRect();
+    const r = boxes.get(el)!;
     return r.top < from.bottom && r.bottom > from.top;
   };
   const others = all.filter(
@@ -200,7 +220,7 @@ export function moveFocus(scope: HTMLElement, dir: Direction): boolean {
     const pool = group ? others.filter((el) => group!.contains(el)) : others;
     const idx = pickNext(
       from,
-      pool.map((el) => el.getBoundingClientRect()),
+      pool.map((el) => boxes.get(el)!),
       dir,
     );
     if (idx >= 0) {
