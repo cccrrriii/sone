@@ -165,11 +165,14 @@ export function TvTrackRow({
   track,
   index,
   showCover,
+  entry,
   onSelect,
 }: {
   track: Track;
   index: number;
   showCover?: boolean;
+  /** Where focus lands when the list is entered for the first time. */
+  entry?: boolean;
   onSelect: () => void;
 }) {
   const nav = useTvNav();
@@ -183,6 +186,7 @@ export function TvTrackRow({
       <button
         data-tv-focusable
         data-tv-has-menu
+        data-tv-default={entry || undefined}
         ref={tvMenuRef(menu)}
         onClick={onSelect}
         className={`tv-track flex-1 min-w-0 flex items-center gap-[1rem] px-[1rem] py-[0.45rem] rounded-[0.6rem] text-left ${

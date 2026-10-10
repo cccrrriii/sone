@@ -20,7 +20,8 @@ import {
   playlistCountLabel,
 } from "../../utils/itemHelpers";
 import { useTvInitialFocus, useTvNav } from "./TvNavContext";
-import { TvButton, TvError, TvHeader, TvSpinner, TvTrackRow } from "./TvParts";
+import TidalImage from "../TidalImage";
+import { TvButton, TvError, TvSpinner, TvTrackRow } from "./TvParts";
 import type { TvView } from "./tvItems";
 import { useTvLoader } from "./useTvLoader";
 
@@ -245,84 +246,121 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
     nav.showNowPlaying();
   };
 
+  const subtitle = [
+    data.subtitle,
+    totalSecs > 0 ? formatTotalDuration(totalSecs) : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  // Cover, title and actions stay in a column on the left while the tracks
+  // scroll on the right, so a wide TV screen is not mostly empty. The column
+  // is a side panel for the spatial navigation: Left from any track reaches
+  // it (landing on the button used last), Right goes back to the tracks.
   return (
-    <div className="pb-[3rem]">
-      <TvHeader
-        image={data.image}
-        kicker={data.kicker}
-        title={data.title}
-        subtitle={[
-          data.subtitle,
-          totalSecs > 0 ? formatTotalDuration(totalSecs) : undefined,
-        ]
-          .filter(Boolean)
-          .join(" · ")}
+    <div className="flex h-full">
+      <aside
+        data-tv-side
+        data-tv-remember
+        className="w-[24rem] shrink-0 h-full overflow-hidden flex flex-col justify-center pl-[3rem] pr-[1.5rem] py-[2.5rem]"
       >
-        <TvButton
-          primary
-          autoFocus
-          icon={<Play className="w-[1rem] h-[1rem]" fill="currentColor" />}
-          label="Play"
-          onClick={playAll}
-        />
-        <TvButton
-          icon={<Shuffle className="w-[1rem] h-[1rem]" />}
-          label="Shuffle"
-          onClick={shufflePlay}
-        />
-        {media && (
-          <TvButton
-            title={liked ? "Remove from collection" : "Add to collection"}
-            active={liked}
-            icon={
-              <Heart
-                className="w-[1rem] h-[1rem]"
-                fill={liked ? "currentColor" : "none"}
-              />
-            }
-            onClick={toggleLike}
+        <div className="w-full aspect-square shrink-0 overflow-hidden rounded-[0.8rem] bg-th-surface shadow-2xl">
+          <TidalImage
+            src={data.image || undefined}
+            alt={data.title}
+            type="album"
+            className="w-full h-full"
           />
+        </div>
+        {data.kicker && (
+          <p className="mt-[1.4rem] text-[0.65rem] font-bold uppercase tracking-[0.15em] text-th-text-muted">
+            {data.kicker}
+          </p>
         )}
-        {media && (
+        <h1 className="text-[1.8rem] font-extrabold leading-tight text-th-text-primary line-clamp-3">
+          {data.title}
+        </h1>
+        {subtitle && (
+          <p className="mt-[0.3rem] text-[0.8rem] text-th-text-secondary line-clamp-2">
+            {subtitle}
+          </p>
+        )}
+        {/* Play and Shuffle share the first line, the smaller actions the
+            second, so nothing wraps awkwardly in the narrow column. */}
+        <div className="mt-[1.2rem] grid grid-cols-2 gap-[0.7rem]">
           <TvButton
-            title="More options"
-            icon={<MoreHorizontal className="w-[1rem] h-[1rem]" />}
-            onClick={() => nav.openMenu(nav.mediaMenu(media))}
+            primary
+            autoFocus
+            icon={<Play className="w-[1rem] h-[1rem]" fill="currentColor" />}
+            label="Play"
+            onClick={playAll}
           />
-        )}
-        {data.artist && (
           <TvButton
-            label={data.artist.name}
-            title={`Go to ${data.artist.name}`}
-            onClick={() =>
-              nav.push({
-                type: "artist",
-                id: data.artist!.id,
-                name: data.artist!.name,
-              })
-            }
+            icon={<Shuffle className="w-[1rem] h-[1rem]" />}
+            label="Shuffle"
+            onClick={shufflePlay}
           />
-        )}
-      </TvHeader>
-      {data.tracks.length === 0 ? (
-        <p className="px-[3rem] text-[0.85rem] text-th-text-muted">
-          No tracks here yet.
-        </p>
-      ) : (
-        <div className="px-[2rem]">
-          {data.tracks.map((track, i) => (
+        </div>
+        <div className="mt-[0.8rem] flex flex-wrap gap-[0.7rem]">
+          {media && (
+            <TvButton
+              title={liked ? "Remove from collection" : "Add to collection"}
+              active={liked}
+              icon={
+                <Heart
+                  className="w-[1rem] h-[1rem]"
+                  fill={liked ? "currentColor" : "none"}
+                />
+              }
+              onClick={toggleLike}
+            />
+          )}
+          {media && (
+            <TvButton
+              title="More options"
+              icon={<MoreHorizontal className="w-[1rem] h-[1rem]" />}
+              onClick={() => nav.openMenu(nav.mediaMenu(media))}
+            />
+          )}
+          {data.artist && (
+            <TvButton
+              label={data.artist.name}
+              title={`Go to ${data.artist.name}`}
+              onClick={() =>
+                nav.push({
+                  type: "artist",
+                  id: data.artist!.id,
+                  name: data.artist!.name,
+                })
+              }
+            />
+          )}
+        </div>
+      </aside>
+      <div
+        data-tv-remember
+        data-tv-scroll-root
+        className="tv-scroll flex-1 min-w-0 h-full overflow-y-auto pl-[0.5rem] pr-[2rem] pt-[2.5rem] pb-[3rem]"
+      >
+        {data.tracks.length === 0 ? (
+          <p className="px-[1rem] text-[0.85rem] text-th-text-muted">
+            No tracks here yet.
+          </p>
+        ) : (
+          data.tracks.map((track, i) => (
             <TvTrackRow
               key={`${track.id}:${i}`}
               track={track}
               index={i}
+              entry={i === 0}
               showCover={view.type !== "album"}
               onSelect={() =>
                 nav.playTrack(track, data.tracks, { source, albumMode })
               }
             />
-          ))}
-        </div>
-      )}
+          ))
+        )}
+      </div>
     </div>
   );
 }

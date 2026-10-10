@@ -12,10 +12,12 @@ html.tv-mode {
   cursor: none !important;
 }
 
-.tv-screen {
+.tv-screen,
+.tv-scroll {
   scrollbar-width: none;
 }
-.tv-screen::-webkit-scrollbar {
+.tv-screen::-webkit-scrollbar,
+.tv-scroll::-webkit-scrollbar {
   display: none;
 }
 
