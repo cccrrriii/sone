@@ -260,6 +260,29 @@ export default function TvApp() {
       win.setFullscreen(false).catch(() => {});
     };
   }, []);
+  // A new video starts full screen. When the one before it was playing
+  // small in Now Playing and Now Playing is still the screen on top (Next,
+  // or the queue moving on), the new one stays small there too.
+  const lastVideo = useRef<{ id: number; expanded: boolean } | null>(null);
+  useLayoutEffect(() => {
+    if (!currentVideo) return;
+    const prev = lastVideo.current;
+    const stackNow = stackRef.current;
+    const onNowPlaying =
+      stackNow[stackNow.length - 1]?.view.type === "nowPlaying";
+    if (
+      prev &&
+      prev.id !== currentVideo.id &&
+      !prev.expanded &&
+      onNowPlaying &&
+      videoExpanded
+    ) {
+      store.set(videoExpandedAtom, false);
+      return;
+    }
+    lastVideo.current = { id: currentVideo.id, expanded: videoExpanded };
+  }, [currentVideo, videoExpanded, store]);
+
   // Mark the video player as soon as it mounts: its buttons become
   // reachable with the arrows and the TV styles apply (scaled controls,
   // desktop-only buttons hidden, never display:none while minimized).

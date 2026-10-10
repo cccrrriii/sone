@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useAtom, useAtomValue, useStore } from "jotai";
 import {
   ChevronDown,
@@ -34,7 +34,11 @@ import {
   preMuteVolumeAtom,
   bitPerfectAtom,
 } from "../../atoms/playback";
-import { currentVideoAtom, videoExpandedAtom } from "../../atoms/video";
+import {
+  currentVideoAtom,
+  videoExpandedAtom,
+  videoPlayingAtom,
+} from "../../atoms/video";
 import { tvLyricsAtom } from "../../atoms/tv";
 import { useFavorites } from "../../hooks/useFavorites";
 import { usePlaybackActions } from "../../hooks/usePlaybackActions";
@@ -52,18 +56,29 @@ import { useToast } from "../../contexts/ToastContext";
 import { TvButton, TvTrackRow } from "./TvParts";
 import { TvLyricsPanel } from "./TvLyrics";
 import { useTvLyrics } from "./useTvLyrics";
-import { useTvMiniVideo } from "./useTvMiniVideo";
+import { useTvMiniVideo, useTvVideoAspect } from "./useTvMiniVideo";
 
 const SEEK_STEP_SECS = 10;
 const UP_NEXT_SHOWN = 20;
 
-/** Re-reads the interpolated playback position a few times a second. */
-function usePosition(): number {
-  const [pos, setPos] = useState(getInterpolatedPosition);
+/** The playing video's element (the video player's, wherever it is shown). */
+function videoElement(): HTMLVideoElement | null {
+  return document.querySelector<HTMLVideoElement>("[role='dialog'] video");
+}
+
+/** Re-reads the playback position a few times a second: the audio player's
+ *  interpolated one, or a video's from its own element. */
+function usePosition(video: boolean): number {
+  const read = useCallback(
+    () =>
+      video ? (videoElement()?.currentTime ?? 0) : getInterpolatedPosition(),
+    [video],
+  );
+  const [pos, setPos] = useState(read);
   useEffect(() => {
-    const id = setInterval(() => setPos(getInterpolatedPosition()), 250);
+    const id = setInterval(() => setPos(read()), 250);
     return () => clearInterval(id);
-  }, []);
+  }, [read]);
   return pos;
 }
 
@@ -145,14 +160,22 @@ const SEEK_HOLD_MS = 700;
 
 function Progress({
   duration,
-  seekable,
+  video,
 }: {
   duration: number;
-  seekable: boolean;
+  /** A video: position, play state and seeking go through its element. */
+  video: boolean;
 }) {
-  const live = Math.min(usePosition(), duration || Infinity);
-  const isPlaying = useAtomValue(isPlayingAtom);
-  const { seekTo } = usePlaybackActions();
+  const live = Math.min(usePosition(video), duration || Infinity);
+  const audioPlaying = useAtomValue(isPlayingAtom);
+  const videoPlaying = useAtomValue(videoPlayingAtom);
+  const isPlaying = video ? videoPlaying : audioPlaying;
+  const { seekTo: seekAudio } = usePlaybackActions();
+  const seekTo = async (secs: number) => {
+    if (!video) return seekAudio(secs);
+    const el = videoElement();
+    if (el) el.currentTime = secs;
+  };
   // While seeking with the remote the bar shows where it is going, and the
   // seek itself goes out once the presses stop: one smooth jump instead of a
   // thumb that bounces between each request and the real position.
@@ -167,7 +190,7 @@ function Progress({
   const pct = duration > 0 ? (position / duration) * 100 : 0;
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (!seekable || duration <= 0) return;
+    if (duration <= 0) return;
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
     const delta = e.key === "ArrowLeft" ? -SEEK_STEP_SECS : SEEK_STEP_SECS;
@@ -198,8 +221,8 @@ function Progress({
   return (
     <div className="w-full">
       <div
-        data-tv-focusable={seekable || undefined}
-        tabIndex={seekable ? 0 : -1}
+        data-tv-focusable
+        tabIndex={0}
         role="slider"
         aria-label="Seek"
         aria-valuemin={0}
@@ -243,8 +266,17 @@ export default function TvNowPlaying() {
   const lyrics = useTvLyrics(
     track && track.itemType !== "video" ? track.id : undefined,
   );
-  const { favoriteTrackIds, addFavoriteTrack, removeFavoriteTrack } =
-    useFavorites();
+  const {
+    favoriteTrackIds,
+    addFavoriteTrack,
+    removeFavoriteTrack,
+    favoriteVideoIds,
+    addFavoriteVideo,
+    removeFavoriteVideo,
+  } = useFavorites();
+  // A video's play state lives on its <video> element, not in the audio
+  // player's state.
+  const videoPlaying = useAtomValue(videoPlayingAtom);
   const {
     togglePlayPause,
     playNext,
@@ -267,6 +299,9 @@ export default function TvNowPlaying() {
     screen.active &&
     !(lyricsOn && !!lyrics);
   useTvMiniVideo(videoSlotRef, screen.element, showVideoInSlot);
+  const videoAspect = useTvVideoAspect(
+    track?.itemType === "video" && !!currentVideo,
+  );
   // After a row leaves the list, focus the row that took its place (or the
   // player, when the list is now empty).
   const refocusUpNext = (index: number) =>
@@ -309,7 +344,10 @@ export default function TvNowPlaying() {
   // itself and needs only a light blur, which is far cheaper to paint on
   // weak integrated graphics than a heavy blur over a full-size cover.
   const backdrop = getTidalImageUrl(trackCoverId(track), 160);
-  const liked = favoriteTrackIds.has(track.id);
+  const liked = isVideo
+    ? favoriteVideoIds.has(track.id)
+    : favoriteTrackIds.has(track.id);
+  const playing = isVideo && currentVideo ? videoPlaying : isPlaying;
   const upNext = [...manualQueue, ...queue].slice(0, UP_NEXT_SHOWN);
   const artist = track.artist ?? track.artists?.[0];
   const quality = isVideo ? "" : formatStreamQuality(streamInfo);
@@ -344,10 +382,18 @@ export default function TvNowPlaying() {
           <div
             ref={isVideo ? videoSlotRef : undefined}
             className={`shrink-0 overflow-hidden rounded-[1rem] shadow-2xl bg-th-surface ${
-              isVideo
-                ? "w-[min(55vw,60rem)] aspect-video"
-                : "h-[min(72vh,40rem)] aspect-square"
+              isVideo ? "" : "h-[min(72vh,40rem)] aspect-square"
             }`}
+            // A video's spot takes the video's own shape (no black bars),
+            // as wide as fits in both directions.
+            style={
+              isVideo
+                ? {
+                    aspectRatio: videoAspect,
+                    width: `min(55vw, 60rem, calc(72vh * ${videoAspect}))`,
+                  }
+                : undefined
+            }
           >
             <TidalImage
               src={cover || undefined}
@@ -395,7 +441,10 @@ export default function TvNowPlaying() {
           )}
 
           <div className="mt-[2rem]">
-            <Progress duration={track.duration ?? 0} seekable={!isVideo} />
+            <Progress
+              duration={track.duration ?? 0}
+              video={isVideo && !!currentVideo}
+            />
           </div>
 
           <div className="mt-[1.4rem] flex flex-wrap items-center gap-[0.8rem]">
@@ -413,9 +462,9 @@ export default function TvNowPlaying() {
             <TvButton
               primary
               autoFocus
-              title={isPlaying ? "Pause" : "Play"}
+              title={playing ? "Pause" : "Play"}
               icon={
-                isPlaying ? (
+                playing ? (
                   <Pause className={icon} fill="currentColor" />
                 ) : (
                   <Play className={icon} fill="currentColor" />
@@ -449,25 +498,35 @@ export default function TvNowPlaying() {
           </div>
 
           <div className="mt-[1rem] flex flex-wrap items-center gap-[0.8rem]">
-            {!isVideo && (
-              <TvButton
-                title={liked ? "Remove from My Tracks" : "Add to My Tracks"}
-                active={liked}
-                icon={
-                  <Heart
-                    className={icon}
-                    fill={liked ? "currentColor" : "none"}
-                  />
-                }
-                onClick={() =>
-                  void (
-                    liked
+            <TvButton
+              title={
+                isVideo
+                  ? liked
+                    ? "Remove from favorites"
+                    : "Add to favorites"
+                  : liked
+                    ? "Remove from My Tracks"
+                    : "Add to My Tracks"
+              }
+              active={liked}
+              icon={
+                <Heart
+                  className={icon}
+                  fill={liked ? "currentColor" : "none"}
+                />
+              }
+              onClick={() =>
+                void (
+                  isVideo
+                    ? liked
+                      ? removeFavoriteVideo(track.id)
+                      : addFavoriteVideo(track.id)
+                    : liked
                       ? removeFavoriteTrack(track.id)
                       : addFavoriteTrack(track.id, track)
-                  ).catch(() => {})
-                }
-              />
-            )}
+                ).catch(() => {})
+              }
+            />
             {lyrics && (
               <TvButton
                 active={lyricsOn}

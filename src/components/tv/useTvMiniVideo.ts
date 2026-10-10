@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 
 /** The video player's dialog, while a video is loaded. */
 function videoDialog(): HTMLElement | null {
@@ -50,4 +50,32 @@ export function useTvMiniVideo(
       window.removeEventListener("resize", place);
     };
   }, [slot, scroller, enabled]);
+}
+
+/** The loaded video's width / height (16:9 until it is known), so the spot
+ *  it plays in can match it instead of letterboxing a 4:3 or 21:9 video. */
+export function useTvVideoAspect(active: boolean): number {
+  const [aspect, setAspect] = useState(16 / 9);
+  useEffect(() => {
+    if (!active) return;
+    const video = document.querySelector<HTMLVideoElement>(
+      "[role='dialog'] video",
+    );
+    if (!video) return;
+    const read = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        setAspect(video.videoWidth / video.videoHeight);
+      }
+    };
+    read();
+    // "resize" fires when the stream's frame size changes (a new video, or
+    // another quality).
+    video.addEventListener("loadedmetadata", read);
+    video.addEventListener("resize", read);
+    return () => {
+      video.removeEventListener("loadedmetadata", read);
+      video.removeEventListener("resize", read);
+    };
+  }, [active]);
+  return aspect;
 }
