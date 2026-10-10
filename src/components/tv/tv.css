@@ -123,3 +123,11 @@ html.tv-mode {
 .tv-mode .tv-video > .z-20 {
   zoom: var(--tv-px-scale, 1);
 }
+/* On the TV the app is always full screen, and a track's actions are in the
+   Now Playing menu; the player's own fullscreen and "More options" buttons
+   (a desktop context menu) are left out. */
+.tv-mode .tv-video button[title="Fullscreen"],
+.tv-mode .tv-video button[title="Exit fullscreen"],
+.tv-mode .tv-video button[title="More options"] {
+  display: none;
+}

@@ -479,22 +479,54 @@ export default function TvApp() {
         const active = document.activeElement;
         const inControls =
           !!dialog &&
-          active instanceof HTMLButtonElement &&
+          (active instanceof HTMLButtonElement ||
+            active instanceof HTMLInputElement) &&
           dialog.contains(active);
         const dir = ARROWS[e.key];
 
+        // The quality picker: its list follows the button while open.
+        const qualityButton = dialog?.querySelector<HTMLElement>(
+          "button[title='Quality']",
+        );
+        const qualityList =
+          qualityButton?.nextElementSibling instanceof HTMLElement
+            ? qualityButton.nextElementSibling
+            : null;
+
         if (e.key === "Backspace" || e.key === "BrowserBack") {
           e.preventDefault();
-          if (inControls) active.blur();
+          if (qualityList && qualityButton) {
+            // Back closes the open quality list first.
+            qualityButton.click();
+            focusElement(qualityButton);
+          } else if (inControls) active.blur();
           else store.set(videoExpandedAtom, false);
           return;
         }
         if (inControls) {
-          // Enter clicks the focused button natively.
+          // Enter clicks the focused button natively. Picking a quality
+          // closes the list; focus goes back to its button.
+          if (
+            e.key === "Enter" &&
+            qualityButton &&
+            qualityList?.contains(active)
+          ) {
+            requestAnimationFrame(() => focusElement(qualityButton));
+          }
           if (dir && dialog) {
             e.preventDefault();
             if (!moveFocus(dialog, dir) && (dir === "up" || dir === "down")) {
               active.blur();
+            }
+            // Leaving the open quality list closes it.
+            const now = document.activeElement;
+            if (
+              qualityList &&
+              qualityButton &&
+              now !== qualityButton &&
+              !qualityList.contains(now)
+            ) {
+              qualityButton.click();
             }
           }
           return;
