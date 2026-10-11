@@ -180,8 +180,14 @@ export function focusElement(el: HTMLElement) {
 }
 
 /** Move focus one step within `scope`. Returns false when nothing lies in
- *  that direction, so callers can decide on a fallback. */
-export function moveFocus(scope: HTMLElement, dir: Direction): boolean {
+ *  that direction, so callers can decide on a fallback. With `enterSide`
+ *  false a side panel is not entered (a held arrow stops at the end of a
+ *  row instead of opening the nav rail). */
+export function moveFocus(
+  scope: HTMLElement,
+  dir: Direction,
+  { enterSide = true }: { enterSide?: boolean } = {},
+): boolean {
   const boxes = measure(scope);
   const all = Array.from(boxes.keys());
   const current = document.activeElement as HTMLElement | null;
@@ -212,7 +218,7 @@ export function moveFocus(scope: HTMLElement, dir: Direction): boolean {
     (el) =>
       el !== current &&
       (sideways
-        ? inSide || !!el.closest(SIDE) || onLine(el)
+        ? inSide || (el.closest(SIDE) ? enterSide : onLine(el))
         : inSide || !el.closest(SIDE)),
   );
   let group: Element | null = current.parentElement?.closest(REMEMBER) ?? null;

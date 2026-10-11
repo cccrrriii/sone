@@ -702,7 +702,9 @@ export default function TvApp() {
           );
           if (screen && focusFirstIn(screen)) return;
         }
-        const moved = moveFocus(scope, dir);
+        // Holding an arrow never opens the nav rail: only a fresh press at
+        // the start of a row does.
+        const moved = moveFocus(scope, dir, { enterSide: !e.repeat });
         moveDrawing = true;
         requestAnimationFrame(() =>
           window.setTimeout(() => {
