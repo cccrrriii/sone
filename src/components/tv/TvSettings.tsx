@@ -344,26 +344,6 @@ export default function TvSettings() {
         </div>
       </Section>
 
-      <Section title="Account">
-        <Row
-          title={userName ? `Signed in as ${userName}` : "Signed in"}
-          subtitle="Log out of TIDAL on this device"
-          value={
-            <LogOut className="w-[1.1rem] h-[1.1rem] text-th-text-muted" />
-          }
-          onSelect={() =>
-            nav.openMenu({
-              title: "Log out?",
-              subtitle: "You can sign in again right here.",
-              items: [
-                { label: "Log out", icon: LogOut, onSelect: () => logout() },
-                { label: "Cancel", icon: X, onSelect: () => {} },
-              ],
-            })
-          }
-        />
-      </Section>
-
       <Section title="TV mode">
         <Row
           title="Show lyrics in Now Playing"
@@ -386,6 +366,26 @@ export default function TvSettings() {
             <LogOut className="w-[1.1rem] h-[1.1rem] text-th-text-muted" />
           }
           onSelect={() => setTvMode(false)}
+        />
+      </Section>
+
+      <Section title="Account">
+        <Row
+          title={userName ? `Signed in as ${userName}` : "Signed in"}
+          subtitle="Log out of TIDAL on this device"
+          value={
+            <LogOut className="w-[1.1rem] h-[1.1rem] text-th-text-muted" />
+          }
+          onSelect={() =>
+            nav.openMenu({
+              title: "Log out?",
+              subtitle: "You can sign in again right here.",
+              items: [
+                { label: "Log out", icon: LogOut, onSelect: () => logout() },
+                { label: "Cancel", icon: X, onSelect: () => {} },
+              ],
+            })
+          }
         />
       </Section>
     </div>

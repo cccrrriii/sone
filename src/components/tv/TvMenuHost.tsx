@@ -62,7 +62,7 @@ export interface TvMenuHostHandle {
   /** Back inside the menu: leaves a submenu, or closes the menu. */
   back: () => void;
   trackMenu: (track: Track, extra?: TvMenuItem[]) => TvMenuSpec;
-  mediaMenu: (item: MediaItemType) => TvMenuSpec;
+  mediaMenu: (item: MediaItemType, onItsPage?: boolean) => TvMenuSpec;
 }
 
 /**
@@ -321,7 +321,7 @@ const TvMenuHost = forwardRef<
   );
 
   const mediaMenu = useCallback(
-    (item: MediaItemType): TvMenuSpec => {
+    (item: MediaItemType, onItsPage = false): TvMenuSpec => {
       const name = item.type === "artist" ? item.name : item.title;
       const open = actionForMedia(item);
       const withTracks = async (fn: (tracks: Track[]) => void, msg: string) => {
@@ -523,7 +523,8 @@ const TvMenuHost = forwardRef<
           },
         );
       }
-      if (open.kind === "open") {
+      // On the item's own page there is nothing to open.
+      if (open.kind === "open" && !onItsPage) {
         const what =
           item.type === "artist"
             ? "Go to artist"

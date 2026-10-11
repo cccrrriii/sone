@@ -382,7 +382,7 @@ export default function TvTrackListScreen({ view }: { view: ListView }) {
             <TvButton
               title="More options"
               icon={<MoreHorizontal className="w-[1rem] h-[1rem]" />}
-              onClick={() => nav.openMenu(nav.mediaMenu(media))}
+              onClick={() => nav.openMenu(nav.mediaMenu(media, true))}
             />
           )}
           {data.artist && (

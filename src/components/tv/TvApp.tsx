@@ -491,7 +491,8 @@ export default function TvApp() {
       playTrack,
       openMenu: (spec) => menuRef.current?.open(spec),
       trackMenu: (track, extra) => menuRef.current!.trackMenu(track, extra),
-      mediaMenu: (item) => menuRef.current!.mediaMenu(item),
+      mediaMenu: (item, onItsPage) =>
+        menuRef.current!.mediaMenu(item, onItsPage),
       openMoreSettings,
       prompt: askText,
     }),
