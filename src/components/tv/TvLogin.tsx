@@ -6,11 +6,18 @@ import {
   useState,
 } from "react";
 import { useSetAtom } from "jotai";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { QRCodeSVG } from "qrcode.react";
-import { LogOut, RefreshCw } from "lucide-react";
-import { getDefaultCredentials } from "../../api/tidal";
+import { ArrowLeft, LogOut, RefreshCw, Smartphone, Tv } from "lucide-react";
+import {
+  getDefaultCredentials,
+  hasPkceDefaults,
+  startPkceLoginWindow,
+} from "../../api/tidal";
+import { authTokensAtom, isAuthenticatedAtom } from "../../atoms/auth";
 import { tvModeAtom } from "../../atoms/tv";
+import type { AuthTokens } from "../../types";
 import { useAuth } from "../../hooks/useAuth";
 import { formatSoneError } from "../../lib/errorUtils";
 import { focusFirstIn, moveFocus, type Direction } from "../../lib/spatialNav";
@@ -40,18 +47,58 @@ const withScheme = (uri: string) =>
   uri.startsWith("http") ? uri : `https://${uri}`;
 
 /**
- * Sign-in for TV mode: TIDAL's device login, shown as a QR code to scan with
- * a phone (or a code to enter at the address shown), so nothing needs typing
- * with the remote. Signing in on the phone signs SONE in; the TV interface
- * then takes over. The desktop login (other sign-in methods) is one button
- * away.
+ * Sign-in for TV mode, two ways:
+ * - On this TV (the desktop's PKCE sign-in, in a maximized window scaled for
+ *   the TV): full quality, but e-mail and password need a keyboard.
+ * - With a phone: TIDAL's device login as a QR code (or a code to enter at
+ *   the address shown); nothing to type, but TIDAL caps streams from this
+ *   kind of sign-in below lossless.
+ * Either way the TV interface takes over once signed in. The desktop login
+ * (other methods) is one button away.
  */
 export default function TvLogin() {
   const { startDeviceAuth, pollDeviceAuth, getUserPlaylists } = useAuth();
   const setTvMode = useSetAtom(tvModeAtom);
+  const setAuthTokens = useSetAtom(authTokensAtom);
+  const setIsAuthenticated = useSetAtom(isAuthenticatedAtom);
   const rootRef = useRef<HTMLDivElement>(null);
+  // null until known whether this build can sign in on the TV (PKCE).
+  const [pkce, setPkce] = useState<boolean | null>(null);
+  const [usePhone, setUsePhone] = useState(false);
+  const [tvError, setTvError] = useState<string | null>(null);
   const [state, setState] = useState<State>({ step: "starting" });
   const [attempt, setAttempt] = useState(0);
+  const phone = pkce === false || usePhone;
+
+  useEffect(() => {
+    hasPkceDefaults().then(setPkce, () => setPkce(false));
+  }, []);
+
+  // The on-TV sign-in reports back through these events (as on the desktop).
+  useEffect(() => {
+    const unsubs: Array<() => void> = [];
+    listen<AuthTokens>("pkce-login-success", async (event) => {
+      const tokens = event.payload;
+      setAuthTokens(tokens);
+      setIsAuthenticated(true);
+      if (tokens.user_id) {
+        await getUserPlaylists(tokens.user_id).catch(() => {});
+      }
+    }).then((u) => unsubs.push(u));
+    listen<string>("pkce-login-error", (event) => {
+      setTvError(event.payload || "Signing in failed.");
+    }).then((u) => unsubs.push(u));
+    return () => unsubs.forEach((u) => u());
+  }, [getUserPlaylists, setAuthTokens, setIsAuthenticated]);
+
+  const signInOnTv = useCallback(() => {
+    setTvError(null);
+    // Scale the sign-in page like the TV interface (1 at 1080p ÷ 1.5 ...).
+    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    startPkceLoginWindow(Math.max(1, rem / 16)).catch((e) =>
+      setTvError(formatSoneError(e)),
+    );
+  }, []);
 
   // Same screen scaling and full screen as the TV interface.
   useLayoutEffect(() => {
@@ -64,6 +111,7 @@ export default function TvLogin() {
   }, []);
 
   useEffect(() => {
+    if (!phone) return;
     let cancelled = false;
     let timer: number | undefined;
     (async () => {
@@ -128,7 +176,7 @@ export default function TvLogin() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [attempt, startDeviceAuth, pollDeviceAuth, getUserPlaylists]);
+  }, [phone, attempt, startDeviceAuth, pollDeviceAuth, getUserPlaylists]);
 
   const retry = useCallback(() => {
     setState({ step: "starting" });
@@ -151,7 +199,65 @@ export default function TvLogin() {
   useEffect(() => {
     const root = rootRef.current;
     if (root && !root.contains(document.activeElement)) focusFirstIn(root);
-  }, [state.step]);
+  }, [state.step, phone, pkce]);
+
+  if (!phone) {
+    return (
+      <div
+        ref={rootRef}
+        className="tv-root h-full w-full flex items-center justify-center px-[5rem] bg-th-base text-th-text-primary"
+      >
+        <div className="max-w-[40rem]">
+          <h1 className="text-[2.4rem] font-extrabold leading-tight">
+            Sign in to TIDAL
+          </h1>
+          {pkce === null ? (
+            <p className="mt-[1rem] text-[1rem] text-th-text-secondary">…</p>
+          ) : (
+            <>
+              <div className="mt-[2rem]">
+                <TvButton
+                  primary
+                  autoFocus
+                  icon={<Tv className="w-[1rem] h-[1rem]" />}
+                  label="Sign in on this TV"
+                  onClick={signInOnTv}
+                />
+                <p className="mt-[0.6rem] text-[0.85rem] text-th-text-secondary">
+                  Full quality, up to Hi-Res. Opens TIDAL&apos;s sign-in page;
+                  e-mail and password need a keyboard.
+                </p>
+                {tvError && (
+                  <p className="mt-[0.6rem] text-[0.85rem] text-red-400">
+                    {tvError}
+                  </p>
+                )}
+              </div>
+              <div className="mt-[2rem]">
+                <TvButton
+                  icon={<Smartphone className="w-[1rem] h-[1rem]" />}
+                  label="Sign in with your phone"
+                  onClick={() => setUsePhone(true)}
+                />
+                <p className="mt-[0.6rem] text-[0.85rem] text-th-text-secondary">
+                  Scan a QR code, nothing to type. TIDAL limits this kind of
+                  sign-in to High quality (AAC, 320 kbps).
+                </p>
+              </div>
+              <div className="mt-[2rem]">
+                <TvButton
+                  icon={<LogOut className="w-[1rem] h-[1rem]" />}
+                  label="Other sign-in options"
+                  title="Leave TV mode for the desktop sign-in"
+                  onClick={() => setTvMode(false)}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -175,6 +281,9 @@ export default function TvLogin() {
             </p>
             <p className="mt-[0.8rem] text-[2.6rem] font-extrabold tracking-[0.2em] tabular-nums">
               {state.userCode}
+            </p>
+            <p className="mt-[0.8rem] text-[0.8rem] text-th-text-muted">
+              TIDAL limits this kind of sign-in to High quality (AAC, 320 kbps).
             </p>
           </>
         )}
@@ -206,6 +315,13 @@ export default function TvLogin() {
               icon={<RefreshCw className="w-[1rem] h-[1rem]" />}
               label="New code"
               onClick={retry}
+            />
+          )}
+          {pkce && (
+            <TvButton
+              icon={<ArrowLeft className="w-[1rem] h-[1rem]" />}
+              label="Back"
+              onClick={() => setUsePhone(false)}
             />
           )}
           <TvButton

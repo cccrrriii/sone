@@ -354,7 +354,7 @@ export default function TvSettings() {
           onSelect={() =>
             nav.openMenu({
               title: "Log out?",
-              subtitle: "You can sign in again with a QR code.",
+              subtitle: "You can sign in again right here.",
               items: [
                 { label: "Log out", icon: LogOut, onSelect: () => logout() },
                 { label: "Cancel", icon: X, onSelect: () => {} },
