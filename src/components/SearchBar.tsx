@@ -19,38 +19,21 @@ import {
   getTrackArtistDisplay,
 } from "../utils/itemHelpers";
 import ExplicitBadge from "./ExplicitBadge";
+import AiBadge from "./AiBadge";
 import TidalImage from "./TidalImage";
 import TrackContextMenu from "./TrackContextMenu";
 import MediaContextMenu from "./MediaContextMenu";
-
-const HISTORY_KEY = "sone.search-history";
-const MAX_HISTORY = 10;
-
-function loadHistory(): string[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed))
-        return parsed
-          .filter((s) => typeof s === "string")
-          .slice(0, MAX_HISTORY);
-    }
-  } catch {}
-  return [];
-}
-
-function saveHistory(history: string[]) {
-  try {
-    localStorage.setItem(
-      HISTORY_KEY,
-      JSON.stringify(history.slice(0, MAX_HISTORY)),
-    );
-  } catch {}
-}
+import { useContentPrefs } from "../hooks/useContentPrefs";
+import { isContentBlocked } from "../lib/contentFilter";
+import {
+  addToSearchHistory,
+  loadSearchHistory,
+  removeFromSearchHistory,
+} from "../lib/searchHistory";
 
 export default function SearchBar() {
-  const { playTrack, setQueueTracks } = usePlaybackActions();
+  const { playSingle } = usePlaybackActions();
+  const contentPrefs = useContentPrefs();
   const {
     navigateToAlbum,
     navigateToArtist,
@@ -66,7 +49,8 @@ export default function SearchBar() {
   );
   const [directHits, setDirectHits] = useState<DirectHitItem[]>([]);
   const [searching, setSearching] = useState(false);
-  const [searchHistory, setSearchHistory] = useState<string[]>(loadHistory);
+  const [searchHistory, setSearchHistory] =
+    useState<string[]>(loadSearchHistory);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -124,24 +108,11 @@ export default function SearchBar() {
   );
 
   const addToHistory = useCallback((query: string) => {
-    const trimmed = query.trim();
-    if (!trimmed) return;
-    setSearchHistory((prev) => {
-      const filtered = prev.filter(
-        (h) => h.toLowerCase() !== trimmed.toLowerCase(),
-      );
-      const next = [trimmed, ...filtered].slice(0, MAX_HISTORY);
-      saveHistory(next);
-      return next;
-    });
+    setSearchHistory((prev) => addToSearchHistory(prev, query));
   }, []);
 
   const removeFromHistory = useCallback((query: string) => {
-    setSearchHistory((prev) => {
-      const next = prev.filter((h) => h !== query);
-      saveHistory(next);
-      return next;
-    });
+    setSearchHistory((prev) => removeFromSearchHistory(prev, query));
   }, []);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -156,6 +127,7 @@ export default function SearchBar() {
       setSearchOpen(false);
       addToHistory(searchQuery.trim());
       navigateToSearch(searchQuery.trim());
+      searchInputRef.current?.blur();
     } else if (e.key === "Escape") {
       // A focused input owns Escape; keep it off the dismissal stack.
       e.stopPropagation();
@@ -255,7 +227,7 @@ export default function SearchBar() {
       {showDropdown && (
         <div
           ref={dropdownRef}
-          className="absolute right-0 top-full mt-2 w-[420px] bg-th-surface rounded-lg shadow-2xl shadow-black/60 border border-th-border-subtle z-50 max-h-[70vh] overflow-y-auto scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent"
+          className="absolute right-0 top-full mt-2 w-[420px] bg-th-surface rounded-lg shadow-2xl shadow-black/60 border border-th-border-popover z-50 max-h-[70vh] overflow-y-auto scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent"
         >
           {/* Local history (when input is empty) */}
           {showLocalHistory && (
@@ -468,9 +440,12 @@ export default function SearchBar() {
                             />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[14px] text-th-text-primary truncate">
-                              {hit.title}
-                            </p>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <p className="text-[14px] text-th-text-primary truncate min-w-0">
+                                {hit.title}
+                              </p>
+                              {hit.ai === true && <AiBadge />}
+                            </div>
                             <p className="text-[11px] text-th-text-faint truncate">
                               Album &middot; {hit.artistName || "Unknown"}
                             </p>
@@ -505,7 +480,7 @@ export default function SearchBar() {
                           key={`dh-${idx}`}
                           className={`flex items-center gap-3 px-3 py-3 hover:bg-th-border-subtle transition-colors text-left group/track ${
                             hit.albumId ? "cursor-pointer" : ""
-                          }`}
+                          }${isContentBlocked(trackObj, contentPrefs) ? " opacity-50" : ""}`}
                           onClick={() => {
                             if (!hit.albumId) return;
                             setSearchOpen(false);
@@ -528,8 +503,7 @@ export default function SearchBar() {
                             title="Play"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setQueueTracks([]);
-                              playTrack(trackObj);
+                              void playSingle(trackObj);
                             }}
                           >
                             <TidalImage
@@ -551,6 +525,7 @@ export default function SearchBar() {
                                 {getTrackDisplayTitle(trackObj)}
                               </span>
                               {trackObj.explicit && <ExplicitBadge />}
+                              {trackObj.ai && <AiBadge />}
                             </div>
                             <p className="text-[11px] text-th-text-faint truncate">
                               Track &middot; {getTrackArtistDisplay(trackObj)}

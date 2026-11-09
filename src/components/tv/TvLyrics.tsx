@@ -1,92 +1,176 @@
-import { useEffect, useRef, useState } from "react";
-import type { LrcLine } from "../../lib/lrc";
+import { useAtomValue } from "jotai";
+import {
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+} from "react";
+import { isPlayingAtom } from "../../atoms/playback";
+import { usePlaybackActions } from "../../hooks/usePlaybackActions";
+import { findActiveLine } from "../../lib/lrc";
 import { getInterpolatedPosition } from "../../lib/playbackPosition";
+import { TvScreenContext } from "./TvNavContext";
 import type { TvLyricsData } from "./useTvLyrics";
 
-function activeLineAt(lines: LrcLine[], pos: number): number {
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (pos >= lines[i].time) return i;
-  }
-  return -1;
-}
-
 /** Lyrics panel for Now Playing. Synced lyrics follow playback with the
- *  current line centred; plain lyrics scroll along with the track's
- *  progress. Not focusable — it only follows the music. */
+ *  current line centred; each line is a button that jumps there, and
+ *  entering the lyrics lands on the current line. Plain lyrics are not
+ *  focusable and scroll along with the track's progress. Idle while the
+ *  screen is hidden or playback is paused, and held where it is while
+ *  `stale` (the last track's lyrics, shown until the next one's arrive). */
 export function TvLyricsPanel({
   lyrics,
   duration,
+  stale = false,
 }: {
   lyrics: TvLyricsData;
   duration: number;
+  stale?: boolean;
 }) {
+  const { active: shown } = useContext(TvScreenContext);
+  const isPlaying = useAtomValue(isPlayingAtom);
+  const { seekTo } = usePlaybackActions();
   const containerRef = useRef<HTMLDivElement>(null);
-  const lineRefs = useRef<(HTMLParagraphElement | null)[]>([]);
+  const lineRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [active, setActive] = useState(-1);
+  const activeRef = useRef(-1);
+  const [focused, setFocused] = useState(-1);
+
+  // One frame on show (a paused track opens on the right line), then every
+  // frame while playing; state changes only when the line does.
+  useEffect(() => {
+    if (lyrics.kind !== "synced" || !shown || stale) return;
+    const lines = lyrics.lines;
+    let rafId = 0;
+    const tick = () => {
+      const idx = findActiveLine(lines, getInterpolatedPosition());
+      if (idx !== activeRef.current) {
+        activeRef.current = idx;
+        setActive(idx);
+      }
+      if (isPlaying) rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [lyrics, shown, isPlaying, stale]);
+
+  // The frame loop is idle while paused — re-sync once per seek.
+  useEffect(() => {
+    if (lyrics.kind !== "synced" || stale) return;
+    const lines = lyrics.lines;
+    const onSeeked = (e: Event) => {
+      const idx = findActiveLine(lines, (e as CustomEvent<number>).detail);
+      activeRef.current = idx;
+      setActive(idx);
+    };
+    window.addEventListener("playback-seeked", onSeeked);
+    return () => window.removeEventListener("playback-seeked", onSeeked);
+  }, [lyrics, stale]);
 
   useEffect(() => {
+    if (
+      lyrics.kind !== "plain" ||
+      !shown ||
+      !isPlaying ||
+      stale ||
+      duration <= 0
+    ) {
+      return;
+    }
+    // Small steps now and then rather than a scroll that never stops.
     const tick = () => {
-      const pos = getInterpolatedPosition();
       const el = containerRef.current;
       if (!el) return;
-      if (lyrics.kind === "synced") {
-        setActive(activeLineAt(lyrics.lines, pos));
-      } else if (duration > 0) {
-        const max = el.scrollHeight - el.clientHeight;
-        el.scrollTo({
-          top: Math.max(0, Math.min(1, pos / duration)) * max,
-          behavior: "smooth",
-        });
-      }
+      const max = el.scrollHeight - el.clientHeight;
+      const progress = getInterpolatedPosition() / duration;
+      el.scrollTop = Math.round(Math.max(0, Math.min(1, progress)) * max);
     };
-    const id = setInterval(tick, 250);
+    const id = setInterval(tick, 1500);
     return () => clearInterval(id);
-  }, [lyrics, duration]);
+  }, [lyrics, duration, shown, isPlaying, stale]);
 
-  // Keep the current line in the middle of the panel.
+  const isInside = (e: FocusEvent<HTMLElement>, node: EventTarget | null) =>
+    node instanceof Node && e.currentTarget.contains(node);
+
+  const onFocus = (e: FocusEvent<HTMLDivElement>) => {
+    if (lyrics.kind !== "synced") return;
+    const target: EventTarget = e.target;
+    if (!isInside(e, e.relatedTarget)) {
+      const line = lineRefs.current[Math.max(active, 0)];
+      if (line && line !== target) {
+        line.focus({ preventScroll: true });
+        return;
+      }
+    }
+    setFocused(lineRefs.current.indexOf(target as HTMLButtonElement));
+  };
+
+  const onBlur = (e: FocusEvent<HTMLDivElement>) => {
+    if (!isInside(e, e.relatedTarget)) setFocused(-1);
+  };
+
+  // Keep the focused line, else the current one, in the middle of the panel.
   useEffect(() => {
     const el = containerRef.current;
-    const line = active >= 0 ? lineRefs.current[active] : null;
+    const idx = focused >= 0 ? focused : active;
+    const line = idx >= 0 ? lineRefs.current[idx] : null;
     if (!el) return;
     const target = line
       ? line.offsetTop - el.clientHeight / 2 + line.offsetHeight / 2
       : 0;
     el.scrollTo({ top: target, behavior: "smooth" });
-  }, [active]);
+  }, [active, focused]);
 
   const fade =
     "linear-gradient(to bottom, transparent 0%, black 18%, black 82%, transparent 100%)";
 
   return (
     <div
-      ref={containerRef}
       dir={lyrics.rtl ? "rtl" : "ltr"}
-      className="tv-lyrics relative h-full w-full overflow-hidden"
-      style={{ maskImage: fade, WebkitMaskImage: fade }}
+      className="flex h-full w-full flex-col"
     >
-      {lyrics.kind === "synced" ? (
-        <div className="py-[45%]">
-          {lyrics.lines.map((line, i) => (
-            <p
-              key={i}
-              ref={(el) => {
-                lineRefs.current[i] = el;
-              }}
-              className={`py-[0.35rem] text-[1.5rem] font-bold leading-snug transition-[color,opacity] duration-300 ${
-                i === active
-                  ? "text-th-text-primary"
-                  : i < active
-                    ? "text-th-text-muted opacity-60"
-                    : "text-th-text-muted"
-              }`}
-            >
-              {line.text}
-            </p>
-          ))}
-        </div>
-      ) : (
-        <p className="whitespace-pre-line py-[30%] text-[1.2rem] font-semibold leading-relaxed text-th-text-secondary">
-          {lyrics.text}
+      <div
+        ref={containerRef}
+        data-tv-clip
+        className="tv-lyrics relative min-h-0 flex-1 overflow-hidden"
+        style={{ maskImage: fade, WebkitMaskImage: fade }}
+        onFocus={onFocus}
+        onBlur={onBlur}
+      >
+        {lyrics.kind === "synced" ? (
+          <div className="py-[45%]">
+            {lyrics.lines.map((line, i) => (
+              <button
+                key={i}
+                type="button"
+                data-tv-focusable
+                ref={(el) => {
+                  lineRefs.current[i] = el;
+                }}
+                onClick={() => void seekTo(line.time)}
+                aria-current={i === active ? "true" : undefined}
+                className={`tv-track block w-full rounded-[0.6rem] px-[0.75rem] py-[0.35rem] text-start text-[1.5rem] font-bold leading-snug transition-[color] duration-300 ${
+                  i === active
+                    ? "text-th-text-primary"
+                    : i < active
+                      ? "text-th-text-disabled"
+                      : "text-th-text-muted"
+                }`}
+              >
+                {line.text}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="whitespace-pre-line py-[30%] text-[1.2rem] font-semibold leading-relaxed text-th-text-secondary">
+            {lyrics.text}
+          </p>
+        )}
+      </div>
+      {lyrics.provider && (
+        <p className="shrink-0 pt-[0.75rem] text-[0.75rem] text-th-text-muted">
+          Lyrics provided by {lyrics.provider}
         </p>
       )}
     </div>

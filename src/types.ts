@@ -33,21 +33,22 @@ export function getTidalPromoImageUrl(imageId: string | undefined): string {
 }
 
 /**
- * Artist pictures use a different size set than album covers — valid squares are
- * 160 / 320 / 480 / 750 (there is no 640 or 1280, which 403). Snap accordingly.
+ * Artist pictures use a different size set than album covers: 160 / 320 / 480 /
+ * 750 squares, no 640 or 1280. Only 160 and 320 exist for every artist; 480 is
+ * missing for many (lesser-known ones especially) and 750 for some, and a missing
+ * size 403s. So anything up to 480 snaps to 320; only an explicit request above
+ * 480 gets 750, for callers that step down on error.
  */
 export function getTidalArtistImageUrl(
   uuid: string | undefined,
-  size: number = 480,
+  size: number = 320,
 ): string {
   if (!uuid) return "";
   if (uuid.startsWith("http")) return uuid;
   const path = uuid.replace(/-/g, "/");
-  let validSize = 480;
+  let validSize = 750;
   if (size <= 160) validSize = 160;
-  else if (size <= 320) validSize = 320;
-  else if (size <= 480) validSize = 480;
-  else validSize = 750;
+  else if (size <= 480) validSize = 320;
   return `https://resources.tidal.com/images/${path}/${validSize}x${validSize}.jpg`;
 }
 
@@ -105,6 +106,7 @@ export interface Track {
   dateAdded?: string;
   isrc?: string;
   explicit?: boolean;
+  ai?: boolean;
   popularity?: number;
   replayGain?: number;
   peak?: number;
@@ -177,6 +179,7 @@ export interface AlbumDetail {
   albumType?: string;
   copyright?: string;
   explicit?: boolean;
+  ai?: boolean;
   popularity?: number;
   url?: string;
   audioQuality?: string;
@@ -315,6 +318,8 @@ export interface DirectHitItem {
   albumCover?: string;
   duration?: number;
   numberOfTracks?: number;
+  /** ALBUMS hits only; TRACKS hits carry it on `track`. */
+  ai?: boolean;
   /** Present on TRACKS hits: the complete track entity, carrying the artists[],
    *  explicit flag and album vibrantColor the flat fields above have no room for.
    *  Read it via buildTrackFromHit() rather than re-projecting the flat fields. */
@@ -556,6 +561,8 @@ export interface HomeSection {
   items: HomeItem[];
   hasMore: boolean;
   apiPath?: string;
+  /** The item a HORIZONTAL_LIST_WITH_CONTEXT row is based on ("Because you listened to"). */
+  header?: HomeItem;
 }
 
 export interface HomePageResponse {
@@ -644,6 +651,7 @@ export type MediaItemType =
       imageId?: string;
       artist?: string;
       duration?: number;
+      explicit?: boolean;
     };
 
 export interface FavoriteMix {

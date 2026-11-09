@@ -27,6 +27,7 @@ import {
   historyAtom,
   streamInfoAtom,
   userPausedAtom,
+  queueEpochAtom,
 } from "../atoms/playback";
 import {
   favoriteTrackIdsAtom,
@@ -39,6 +40,8 @@ import {
   optimisticFavoriteMixesAtom,
 } from "../atoms/favorites";
 import { currentViewAtom } from "../atoms/navigation";
+import { tvSearchQueryAtom } from "../atoms/tv";
+import { resetHomeFeed } from "./useHomeFeed";
 import { clearAllOffsets } from "../lib/scrollMemory";
 import {
   clearCache,
@@ -68,6 +71,7 @@ export function useAuth() {
   const setIsPlaying = useSetAtom(isPlayingAtom);
   const setCurrentTrack = useSetAtom(currentTrackAtom);
   const setQueue = useSetAtom(queueAtom);
+  const setQueueEpoch = useSetAtom(queueEpochAtom);
   const setHistory = useSetAtom(historyAtom);
   const setStreamInfo = useSetAtom(streamInfoAtom);
   const setUserPaused = useSetAtom(userPausedAtom);
@@ -92,6 +96,7 @@ export function useAuth() {
   const setAddedToFolder = useSetAtom(addedToFolderAtom);
   const setRenamedFolders = useSetAtom(renamedFoldersAtom);
   const setUpdatedPlaylists = useSetAtom(updatedPlaylistsAtom);
+  const setTvSearchQuery = useSetAtom(tvSearchQueryAtom);
 
   // NOTE: Auth loading effect has been moved to AppInitializer
   // to avoid running once per component that calls useAuth().
@@ -240,6 +245,7 @@ export function useAuth() {
     setIsPlaying(false);
     setCurrentTrack(null);
     setQueue([]);
+    setQueueEpoch((e) => e + 1);
     try {
       await invoke("logout");
     } catch (error) {
@@ -275,9 +281,11 @@ export function useAuth() {
       setAddedToFolder(new Map());
       setRenamedFolders(new Map());
       setUpdatedPlaylists(new Map());
-      // Navigation
+      // Navigation, Home feed, TV search
       clearAllOffsets();
       setCurrentView({ type: "home" });
+      resetHomeFeed();
+      setTvSearchQuery("");
       try {
         localStorage.removeItem(PLAYBACK_STATE_KEY);
         localStorage.removeItem(VOLUME_STATE_KEY);
@@ -295,6 +303,7 @@ export function useAuth() {
     setIsPlaying,
     setCurrentTrack,
     setQueue,
+    setQueueEpoch,
     setHistory,
     setStreamInfo,
     setUserPaused,
@@ -317,6 +326,7 @@ export function useAuth() {
     setRenamedFolders,
     setUpdatedPlaylists,
     setCurrentView,
+    setTvSearchQuery,
   ]);
 
   const getUserPlaylists = useCallback(

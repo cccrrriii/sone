@@ -13,7 +13,8 @@ import {
   Maximize2,
 } from "lucide-react";
 import ExplicitBadge from "./ExplicitBadge";
-import { parseLrc, type LrcLine } from "../lib/lrc";
+import AiBadge from "./AiBadge";
+import { findActiveLine, parseLrc, type LrcLine } from "../lib/lrc";
 import { isNavigableSource } from "../lib/playbackSource";
 import {
   useState,
@@ -48,25 +49,23 @@ import { useDrawer } from "../hooks/useDrawer";
 import { useFavorites } from "../hooks/useFavorites";
 import { useNavigation } from "../hooks/useNavigation";
 import { useEscapeDismiss } from "../hooks/useEscapeDismiss";
+import { useContentPrefs } from "../hooks/useContentPrefs";
+import { isContentBlocked } from "../lib/contentFilter";
 import { DISMISS_PRIORITY } from "../lib/dismissStack";
 import { useToast } from "../contexts/ToastContext";
 import { getInterpolatedPosition } from "../lib/playbackPosition";
-import {
-  getMixItems,
-  getTrackLyrics,
-  getTrackCredits,
-  getArtistBio,
-} from "../api/tidal";
+import { getTrackLyrics, getArtistBio } from "../api/tidal";
 import BioText from "./BioText";
 import { isTrackUnavailable } from "../lib/trackAvailability";
 import { COVER_TEXT_GAP, MAX_COVER_SIZE } from "../lib/coverFit";
 import { useFittedCoverSize } from "../hooks/useFittedCoverSize";
+import { useSuggestedTracks } from "../hooks/useSuggestedTracks";
+import { useTrackCredits } from "../hooks/useTrackCredits";
 import {
   getTidalImageUrl,
   getTrackDisplayTitle,
   type Track,
   type Lyrics,
-  type Credit,
 } from "../types";
 import TidalImage from "./TidalImage";
 import { TITLEBAR_HEIGHT } from "./TitleBar";
@@ -394,7 +393,7 @@ const QueueTab = memo(function QueueTab({
                 isActive={false}
                 isPlaying={false}
                 dimmed
-                onClick={() => playTrack(track)}
+                onClick={() => playTrack(track, { retryOnRateLimit: true })}
                 {...trackRowNav(track)}
               />
             ))}
@@ -604,20 +603,25 @@ function SuggestedTrackRow({
     setContextMenu({ x: e.clientX, y: e.clientY });
   }, []);
 
+  const contentPrefs = useContentPrefs();
+  const blocked = isContentBlocked(track, contentPrefs);
+
   const handleRowClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
+      if (blocked) return;
       onAddToQueue(track);
     },
-    [track, onAddToQueue],
+    [track, onAddToQueue, blocked],
   );
 
   const handlePlayClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
+      if (blocked) return;
       onPlay(track);
     },
-    [track, onPlay],
+    [track, onPlay, blocked],
   );
 
   const handleToggleFavorite = useCallback(
@@ -631,9 +635,10 @@ function SuggestedTrackRow({
   const handleAddToQueue = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
+      if (blocked) return;
       onAddToQueue(track);
     },
-    [track, onAddToQueue],
+    [track, onAddToQueue, blocked],
   );
 
   const handleDotsClick = useCallback((e: React.MouseEvent) => {
@@ -646,13 +651,17 @@ function SuggestedTrackRow({
       <div
         onClick={handleRowClick}
         onContextMenu={handleRightClick}
-        className={`flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer group transition-[background-color] duration-150 ${
-          isActive ? "bg-th-hl-med" : "hover:bg-th-hl-faint"
+        className={`flex items-center gap-3 px-3 py-2 rounded-md transition-[background-color] duration-150 ${
+          blocked
+            ? "opacity-40 cursor-default"
+            : `cursor-pointer group ${isActive ? "bg-th-hl-med" : "hover:bg-th-hl-faint"}`
         }`}
       >
         {/* Album art with play overlay — scoped hover via group/image */}
         <div
-          className="w-10 h-10 rounded bg-th-surface-hover overflow-hidden shrink-0 relative cursor-pointer group/image"
+          className={`w-10 h-10 rounded bg-th-surface-hover overflow-hidden shrink-0 relative ${
+            blocked ? "" : "cursor-pointer group/image"
+          }`}
           onClick={handlePlayClick}
         >
           <TidalImage
@@ -677,6 +686,7 @@ function SuggestedTrackRow({
               {getTrackDisplayTitle(track)}
             </p>
             {track.explicit && <ExplicitBadge />}
+            {track.ai && <AiBadge />}
           </div>
           <p className="text-[11px] text-th-text-muted truncate">
             <TrackArtists
@@ -776,40 +786,14 @@ const SuggestedTab = memo(function SuggestedTab() {
   const { navigateToArtist, navigateToAlbum } = useNavigation();
   const { showToast } = useToast();
 
-  const [tracks, setTracks] = useState<Track[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!currentTrack) return;
-
-    let active = true;
-    setLoading(true);
-    setError(null);
-
-    const trackMixId = currentTrack.mixes?.TRACK_MIX;
-    if (trackMixId) {
-      getMixItems(trackMixId)
-        .then(({ tracks }) => {
-          if (active) setTracks(tracks);
-        })
-        .catch((err) => {
-          if (active) setError(String(err));
-        })
-        .finally(() => {
-          if (active) setLoading(false);
-        });
-    } else {
-      setTracks([]);
-      setLoading(false);
-    }
-
-    return () => {
-      active = false;
-    };
-  }, [currentTrack?.id]);
+  const { tracks, loading, error } = useSuggestedTracks(currentTrack);
 
   // Stable callbacks passed to every row — hooks called once here, not per row
+  const handlePlay = useCallback(
+    (track: Track) => playTrack(track, { retryOnRateLimit: true }),
+    [playTrack],
+  );
+
   const handleAddToQueue = useCallback(
     (track: Track) => {
       const trackSource = track.album
@@ -917,7 +901,7 @@ const SuggestedTab = memo(function SuggestedTab() {
           isActive={currentTrack?.id === track.id}
           index={i}
           isFav={favoriteTrackIds.has(track.id)}
-          onPlay={playTrack}
+          onPlay={handlePlay}
           onAddToQueue={handleAddToQueue}
           onToggleFavorite={handleToggleFavorite}
           onArtistClick={handleArtistClick}
@@ -933,24 +917,29 @@ const SuggestedTab = memo(function SuggestedTab() {
 // Memoized individual lyrics line — only re-renders when its own state changes
 const LyricsLine = memo(function LyricsLine({
   text,
+  time,
   isActive,
   isPast,
   lineRef,
+  onSeek,
 }: {
   text: string;
+  time: number;
   isActive: boolean;
   isPast: boolean;
   lineRef: (el: HTMLParagraphElement | null) => void;
+  onSeek: (time: number) => void;
 }) {
   return (
     <p
       ref={lineRef}
-      className={`text-xl font-medium cursor-default leading-snug origin-left transition-[transform,color,opacity] duration-500 ease-out ${
+      onClick={() => onSeek(time)}
+      className={`w-fit text-xl font-medium cursor-pointer leading-snug origin-left transition-[transform,color,opacity] duration-500 ease-out ${
         isActive
           ? "scale-[1.22] font-bold text-th-text-primary"
           : isPast
-            ? "text-th-text-disabled"
-            : "text-th-text-faint"
+            ? "text-th-text-disabled hover:text-th-text-secondary"
+            : "text-th-text-faint hover:text-th-text-secondary"
       }`}
       style={isActive ? { willChange: "transform" } : undefined}
     >
@@ -975,6 +964,7 @@ const LyricsTab = memo(function LyricsTab() {
     undefined,
   );
   const activeLineRef = useRef(-1);
+  const { seekTo } = usePlaybackActions();
 
   // Fetch lyrics
   useEffect(() => {
@@ -1031,14 +1021,7 @@ const LyricsTab = memo(function LyricsTab() {
 
     let rafId: number;
     const tick = () => {
-      const pos = getInterpolatedPosition();
-      let idx = -1;
-      for (let i = lrcLines.length - 1; i >= 0; i--) {
-        if (pos >= lrcLines[i].time) {
-          idx = i;
-          break;
-        }
-      }
+      const idx = findActiveLine(lrcLines, getInterpolatedPosition());
       // Only update state when the active line actually changes
       if (idx !== activeLineRef.current) {
         activeLineRef.current = idx;
@@ -1050,6 +1033,27 @@ const LyricsTab = memo(function LyricsTab() {
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
   }, [lrcLines, isPlaying]);
+
+  // The rAF loop is idle while paused — re-sync once per seek
+  useEffect(() => {
+    if (lrcLines.length === 0) return;
+    const onSeeked = (e: Event) => {
+      const idx = findActiveLine(lrcLines, (e as CustomEvent<number>).detail);
+      activeLineRef.current = idx;
+      setActiveLine(idx);
+    };
+    window.addEventListener("playback-seeked", onSeeked);
+    return () => window.removeEventListener("playback-seeked", onSeeked);
+  }, [lrcLines]);
+
+  // Re-centre only after the seek has moved activeLine, so the view doesn't
+  // slide back to the old line first
+  const handleSeek = useCallback(
+    (time: number) => {
+      void seekTo(time).then(() => setUserScrolled(false));
+    },
+    [seekTo],
+  );
 
   // Auto-scroll to active line (only if user hasn't scrolled)
   const scrollToLine = useCallback((idx: number) => {
@@ -1118,9 +1122,11 @@ const LyricsTab = memo(function LyricsTab() {
             <LyricsLine
               key={i}
               text={line.text}
+              time={line.time}
               isActive={i === activeLine}
               isPast={activeLine >= 0 && i < activeLine}
               lineRef={setLineRef(i)}
+              onSeek={handleSeek}
             />
           ))}
           <div className="h-40" /> {/* bottom spacer */}
@@ -1180,35 +1186,13 @@ function SkeletonRow({ first = false }: { first?: boolean }) {
 const CreditsTab = memo(function CreditsTab() {
   const currentTrack = useAtomValue(currentTrackAtom);
   const { navigateToArtist } = useNavigation();
-  const [credits, setCredits] = useState<Credit[]>([]);
-  const [creditsLoading, setCreditsLoading] = useState(true);
-  const [creditsError, setCreditsError] = useState<string | null>(null);
+  const {
+    credits,
+    loading: creditsLoading,
+    error: creditsError,
+  } = useTrackCredits(currentTrack?.id);
   const [bio, setBio] = useState<string | null>(null);
   const [bioLoading, setBioLoading] = useState(false);
-
-  useEffect(() => {
-    if (!currentTrack) return;
-
-    let active = true;
-    setCreditsLoading(true);
-    setCreditsError(null);
-    setCredits([]);
-
-    getTrackCredits(currentTrack.id)
-      .then((result) => {
-        if (active) setCredits(result);
-      })
-      .catch((err) => {
-        if (active) setCreditsError(String(err));
-      })
-      .finally(() => {
-        if (active) setCreditsLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [currentTrack?.id]);
 
   useEffect(() => {
     const artistId = currentTrack?.artist?.id;
@@ -1443,6 +1427,7 @@ function TrackRow({
               {getTrackDisplayTitle(track)}
             </p>
             {track.explicit && <ExplicitBadge />}
+            {track.ai && <AiBadge />}
           </div>
           <p className="text-[11px] text-th-text-muted truncate">
             <TrackArtists
@@ -1682,9 +1667,13 @@ export default function NowPlayingDrawer() {
             ref={coverTextRef}
             className="shrink-0 text-center w-full max-w-[520px]"
           >
-            <h2 className="text-[22px] font-bold text-th-text-primary truncate">
-              {getTrackDisplayTitle(currentTrack)}
-            </h2>
+            <div className="flex items-center justify-center gap-2 min-w-0">
+              <h2 className="text-[22px] font-bold text-th-text-primary truncate min-w-0">
+                {getTrackDisplayTitle(currentTrack)}
+              </h2>
+              {currentTrack.explicit && <ExplicitBadge />}
+              {currentTrack.ai && <AiBadge />}
+            </div>
             <p className="text-[15px] text-th-text-muted truncate mt-1">
               {getTrackArtistDisplay(currentTrack)}
             </p>

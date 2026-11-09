@@ -24,6 +24,11 @@ pub fn open_log_folder() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
 pub fn get_signal_path(state: State<'_, AppState>) -> SignalPath {
     state.signal_path.snapshot()
 }
@@ -61,7 +66,8 @@ pub async fn get_image_bytes(
                 .proxied_http
                 .client()
                 .map_err(|e| SoneError::ProxyBlocked { reason: e.cause })?;
-            let res = http_client.get(&url).send().await?;
+            // A missing size (403) must fail, not be cached as the image.
+            let res = http_client.get(&url).send().await?.error_for_status()?;
             let bytes = res.bytes().await?.to_vec();
 
             state
@@ -310,6 +316,12 @@ pub fn list_audio_devices(state: State<'_, AppState>) -> Result<Vec<AudioDevice>
     Ok(devices)
 }
 
+/// Snap confinement blocks the Discord socket unless the user runs a relay.
+#[tauri::command]
+pub fn is_snap() -> bool {
+    std::env::var("SNAP").is_ok()
+}
+
 #[tauri::command]
 pub fn get_discord_rpc(state: State<'_, AppState>) -> bool {
     state
@@ -381,6 +393,15 @@ pub fn set_discord_status_text(state: State<'_, AppState>, text: String) -> Resu
     settings.discord_status_text = text;
     state.save_settings(&settings)?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn install_current_webview_proxy_auth(window: tauri::WebviewWindow) {
+    #[cfg(target_os = "linux")]
+    crate::webview_proxy_auth::install_window(&window);
+
+    #[cfg(not(target_os = "linux"))]
+    let _ = window;
 }
 
 #[tauri::command]
@@ -627,14 +648,25 @@ pub async fn set_proxy_settings(
 pub async fn inhibit_idle(
     window: tauri::WebviewWindow,
     state: State<'_, AppState>,
+    holder: Option<String>,
 ) -> Result<(), SoneError> {
-    state.idle_inhibitor.lock().await.inhibit(&window).await;
+    let holder = holder.as_deref().unwrap_or("default");
+    state
+        .idle_inhibitor
+        .lock()
+        .await
+        .acquire(holder, &window)
+        .await;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn uninhibit_idle(state: State<'_, AppState>) -> Result<(), SoneError> {
-    state.idle_inhibitor.lock().await.uninhibit().await;
+pub async fn uninhibit_idle(
+    state: State<'_, AppState>,
+    holder: Option<String>,
+) -> Result<(), SoneError> {
+    let holder = holder.as_deref().unwrap_or("default");
+    state.idle_inhibitor.lock().await.release(holder).await;
     Ok(())
 }
 

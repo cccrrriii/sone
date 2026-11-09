@@ -5,6 +5,7 @@ interface Props {
   children: ReactNode;
   resetKey?: unknown;
   onGoHome: () => void;
+  fallback?: (actions: { reload: () => void; goHome: () => void }) => ReactNode;
 }
 
 interface State {
@@ -39,9 +40,15 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (!this.state.error) return this.props.children;
+    if (this.props.fallback) {
+      return this.props.fallback({
+        reload: this.handleReload,
+        goHome: this.handleGoHome,
+      });
+    }
 
     return (
-      <div className="h-full bg-linear-to-b from-th-surface to-th-base flex items-center justify-center">
+      <div className="h-full page-gradient flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center px-8">
           <AlertTriangle size={48} className="text-th-text-disabled" />
           <p className="text-th-text-primary font-semibold text-lg">

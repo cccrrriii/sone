@@ -12,10 +12,11 @@ import { useEffect, useRef, startTransition } from "react";
 import { useSetAtom, useStore, useAtomValue } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { parseTidalUrl } from "../lib/tidalUrl";
-import { updateToastSeenAtom } from "../atoms/updates";
+import { updateInfoAtom, updateToastSeenAtom } from "../atoms/updates";
 import { shouldShowUpdateToast, type UpdateInfo } from "../lib/updateToast";
 import { refreshApp } from "../lib/refreshApp";
 
@@ -44,7 +45,7 @@ import {
   queueAtom,
   historyAtom,
   volumeAtom,
-  preMuteVolumeAtom,
+  toggleMute,
   exclusiveModeAtom,
   bitPerfectAtom,
   gaplessAtom,
@@ -69,6 +70,8 @@ import {
   maximizedPlayerAtom,
 } from "../atoms/ui";
 import { themeAtom } from "../atoms/theme";
+import { tvModeAtom } from "../atoms/tv";
+import { TV_VOLUME_STEP } from "./tv/tvKeys";
 import { proxySettingsAtom, type ProxySettings } from "../atoms/proxy";
 import {
   syncThemeToFile,
@@ -78,7 +81,10 @@ import {
 import type { ThemeFile } from "../lib/theme";
 
 // Stable action callbacks (no atom subscriptions)
-import { usePlaybackActions } from "../hooks/usePlaybackActions";
+import {
+  cancelPendingResume,
+  usePlaybackActions,
+} from "../hooks/usePlaybackActions";
 import {
   useGaplessPrefetch,
   type PendingNext,
@@ -87,6 +93,7 @@ import { useFavorites } from "../hooks/useFavorites";
 import { useShortcuts } from "../hooks/useShortcuts";
 import { useMcpBridge } from "../hooks/useMcpBridge";
 import { useOverlayBridge } from "../hooks/useOverlayBridge";
+import { useMprisFullscreen } from "../hooks/useMprisFullscreen";
 import { useToast } from "../contexts/ToastContext";
 import {
   checkNetworkError,
@@ -120,6 +127,11 @@ import {
   formatStreamQuality,
 } from "../utils/itemHelpers";
 import { ensureQid, advanceCounterPast } from "../lib/qid";
+import {
+  filterSnapshotTracks,
+  isContentBlocked,
+  readContentPrefs,
+} from "../lib/contentFilter";
 import {
   clearOffset,
   pushView,
@@ -195,7 +207,7 @@ export function AppInitializer() {
 
   // ---- Stable playback actions (no subscriptions) ----
   const {
-    playTrack,
+    playSingle,
     playNext,
     playPrevious,
     pauseTrack,
@@ -251,6 +263,7 @@ export function AppInitializer() {
   useEffect(() => {
     invoke<UpdateInfo>("check_for_update")
       .then((info) => {
+        store.set(updateInfoAtom, info);
         const { show, next } = shouldShowUpdateToast(
           info,
           store.get(updateToastSeenAtom),
@@ -547,7 +560,7 @@ export function AppInitializer() {
     } else {
       // playTrack: fetch track metadata, then play
       getTrack(action.trackId)
-        .then((track) => playTrack(track))
+        .then((track) => playSingle(track))
         .catch((err) => console.error("Deep link play failed:", err));
     }
   }
@@ -573,63 +586,86 @@ export function AppInitializer() {
 
     const restoreSnapshot = (raw: string) => {
       const parsed = JSON.parse(raw) as Partial<PlaybackSnapshot>;
+      const prefs = readContentPrefs(store);
 
-      const restoredCurrentTrack =
+      const parsedCurrent =
         parsed.currentTrack && typeof parsed.currentTrack.id === "number"
           ? stripRuntimeTrackFields(parsed.currentTrack as Track)
           : null;
+      const restoredCurrentTrack =
+        parsedCurrent && !isContentBlocked(parsedCurrent, prefs)
+          ? parsedCurrent
+          : null;
 
-      const restoredQueue = Array.isArray(parsed.queue)
-        ? parsed.queue
-            .filter((t): t is Track => !!t && typeof t.id === "number")
-            .map(stripRuntimeTrackFields)
-        : [];
+      const restoredQueue = filterSnapshotTracks(
+        Array.isArray(parsed.queue)
+          ? parsed.queue
+              .filter((t): t is Track => !!t && typeof t.id === "number")
+              .map(stripRuntimeTrackFields)
+          : [],
+        prefs,
+      );
 
-      const restoredHistory = Array.isArray(parsed.history)
-        ? parsed.history
-            .filter((t): t is Track => !!t && typeof t.id === "number")
-            .map(stripRuntimeTrackFields)
-        : [];
+      const restoredHistory = filterSnapshotTracks(
+        Array.isArray(parsed.history)
+          ? parsed.history
+              .filter((t): t is Track => !!t && typeof t.id === "number")
+              .map(stripRuntimeTrackFields)
+          : [],
+        prefs,
+      );
       const cappedHistory =
         restoredHistory.length > MAX_HISTORY_TRACKS
           ? restoredHistory.slice(restoredHistory.length - MAX_HISTORY_TRACKS)
           : restoredHistory;
 
       const restoredOriginalQueue = Array.isArray(parsed.originalQueue)
-        ? parsed.originalQueue
-            .filter(isValidTrack)
-            .map((t) =>
-              ensureQid(stripRuntimeTrackFields(t as Track) as QueuedTrack),
-            )
-        : null;
-
-      const restoredManualQueue = Array.isArray(parsed.manualQueue)
-        ? parsed.manualQueue
-            .filter(isValidTrack)
-            .map((t) =>
-              ensureQid(stripRuntimeTrackFields(t as Track) as QueuedTrack),
-            )
-        : [];
-
-      const restoredPlaybackSource = parsed.playbackSource
-        ? {
-            ...parsed.playbackSource,
-            tracks: parsed.playbackSource.tracks
+        ? filterSnapshotTracks(
+            parsed.originalQueue
               .filter(isValidTrack)
               .map((t) =>
                 ensureQid(stripRuntimeTrackFields(t as Track) as QueuedTrack),
               ),
+            prefs,
+          )
+        : null;
+
+      const restoredManualQueue = filterSnapshotTracks(
+        Array.isArray(parsed.manualQueue)
+          ? parsed.manualQueue
+              .filter(isValidTrack)
+              .map((t) =>
+                ensureQid(stripRuntimeTrackFields(t as Track) as QueuedTrack),
+              )
+          : [],
+        prefs,
+      );
+
+      const restoredPlaybackSource = parsed.playbackSource
+        ? {
+            ...parsed.playbackSource,
+            tracks: filterSnapshotTracks(
+              parsed.playbackSource.tracks
+                .filter(isValidTrack)
+                .map((t) =>
+                  ensureQid(stripRuntimeTrackFields(t as Track) as QueuedTrack),
+                ),
+              prefs,
+            ),
           }
         : null;
 
       const restoredContextSource = parsed.contextSource
         ? {
             ...parsed.contextSource,
-            tracks: parsed.contextSource.tracks
-              .filter(isValidTrack)
-              .map((t) =>
-                ensureQid(stripRuntimeTrackFields(t as Track) as QueuedTrack),
-              ),
+            tracks: filterSnapshotTracks(
+              parsed.contextSource.tracks
+                .filter(isValidTrack)
+                .map((t) =>
+                  ensureQid(stripRuntimeTrackFields(t as Track) as QueuedTrack),
+                ),
+              prefs,
+            ),
           }
         : null;
 
@@ -807,18 +843,28 @@ export function AppInitializer() {
   //  change, so an edit lands even while unfocused or in the tray
   // ================================================================
   useEffect(() => {
+    const apply = (file: ThemeFile) =>
+      applyExternalThemeFile(
+        file,
+        () => store.get(themeAtom),
+        (t) => store.set(themeAtom, t),
+      );
     const unlisten = listen<ThemeFile | null>("theme-file-changed", (event) => {
       if (event.payload === null) {
         // Deleted while running -- put it back from the live theme.
         void recreateThemeFile(store.get(themeAtom));
         return;
       }
-      applyExternalThemeFile(
-        event.payload,
-        () => store.get(themeAtom),
-        (t) => store.set(themeAtom, t),
-      );
+      apply(event.payload);
     });
+    // An edit made between the pre-render read and this listener attaching
+    // was reported to nobody, and the watcher won't report it again.
+    void unlisten
+      .then(() => invoke<ThemeFile | null>("theme_file_get"))
+      .then((file) => {
+        if (file) apply(file);
+      })
+      .catch(() => {});
     return () => {
       void unlisten.then((fn) => fn());
     };
@@ -1110,6 +1156,7 @@ export function AppInitializer() {
       if (playing) pauseTrack();
     });
     const unlistenMprisStop = listen("mpris:stop", () => {
+      cancelPendingResume();
       invoke("stop_track").catch(() => {});
       store.set(isPlayingAtom, false);
     });
@@ -1271,12 +1318,6 @@ export function AppInitializer() {
       }
       handleDeepLink(url);
     });
-    const unlistenFullscreen = listen<boolean>(
-      "mpris:set-fullscreen",
-      (event) => {
-        store.set(maximizedPlayerAtom, event.payload);
-      },
-    );
     return () => {
       unlistenSeek.then((fn) => fn());
       unlistenVolume.then((fn) => fn());
@@ -1284,42 +1325,31 @@ export function AppInitializer() {
       unlistenLoop.then((fn) => fn());
       unlistenSetPosition.then((fn) => fn());
       unlistenOpenUri.then((fn) => fn());
-      unlistenFullscreen.then((fn) => fn());
     };
   }, [store, setVolume, toggleShuffle, seekTo]);
 
-  useEffect(() => {
-    const push = () => {
-      invoke("update_mpris_fullscreen", {
-        fullscreen: store.get(maximizedPlayerAtom),
-      }).catch(() => {});
-    };
-    push();
-    return store.sub(maximizedPlayerAtom, push);
-  }, [store]);
+  useMprisFullscreen();
 
   // ================================================================
   //  KEYBOARD SHORTCUTS
   //  Configurable via shortcutsAtom (see src/lib/shortcuts.ts).
   //  Action callbacks are stable; store.get() reads at call-time.
   // ================================================================
+  // TV mode steps finer, like its remote volume keys.
+  const stepVolume = (dir: 1 | -1) => {
+    const step = store.get(tvModeAtom) ? TV_VOLUME_STEP : 0.1;
+    const next = Math.round((store.get(volumeAtom) + dir * step) * 100) / 100;
+    setVolume(Math.min(1, Math.max(0, next)));
+  };
   useShortcuts({
     playPause: () => {
       togglePlayPause();
     },
     nextTrack: () => playNext({ explicit: true }),
     prevTrack: () => playPrevious(),
-    volumeUp: () => setVolume(Math.min(1.0, store.get(volumeAtom) + 0.1)),
-    volumeDown: () => setVolume(Math.max(0.0, store.get(volumeAtom) - 0.1)),
-    muteToggle: () => {
-      const vol = store.get(volumeAtom);
-      if (vol > 0) {
-        store.set(preMuteVolumeAtom, vol);
-        setVolume(0);
-      } else {
-        setVolume(store.get(preMuteVolumeAtom) || 0.5);
-      }
-    },
+    volumeUp: () => stepVolume(1),
+    volumeDown: () => stepVolume(-1),
+    muteToggle: () => toggleMute(store, setVolume),
     likeToggle: () => {
       const track = store.get(currentTrackAtom);
       if (!track) return;
@@ -1390,6 +1420,8 @@ export function AppInitializer() {
     toggleShortcuts: () => {
       window.dispatchEvent(new CustomEvent("toggle-shortcuts"));
     },
+    closeWindow: () => void getCurrentWindow().close(),
+    quitApp: () => void invoke("quit_app").catch(() => {}),
   });
 
   // ================================================================

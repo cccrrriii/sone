@@ -1,8 +1,19 @@
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { useAtom, useAtomValue, useStore } from "jotai";
 import {
+  ArrowDown,
+  ArrowUp,
   ChevronDown,
+  ChevronRight,
   Heart,
+  ListStart,
   ListX,
   Maximize2,
   Mic2,
@@ -18,33 +29,50 @@ import {
   SkipBack,
   SkipForward,
   Trash2,
+  X,
 } from "lucide-react";
 import TidalImage from "../TidalImage";
+import TidalVideoCover from "../TidalVideoCover";
 import SignalPathPanel from "../SignalPathPanel";
 import TvNativeLayer from "./TvNativeLayer";
 import {
+  contextSourceAtom,
   currentTrackAtom,
+  historyAtom,
   isPlayingAtom,
   manualQueueAtom,
+  playbackSourceAtom,
   queueAtom,
   repeatAtom,
   shuffleAtom,
   streamInfoAtom,
   volumeAtom,
-  preMuteVolumeAtom,
-  bitPerfectAtom,
 } from "../../atoms/playback";
+import { videoCoversAtom } from "../../atoms/ui";
 import {
   currentVideoAtom,
   videoExpandedAtom,
   videoPlayingAtom,
 } from "../../atoms/video";
-import { tvLyricsAtom } from "../../atoms/tv";
+import {
+  tvLyricsAtom,
+  tvNowPlayingTabAtom,
+  type TvNowPlayingTab,
+} from "../../atoms/tv";
 import { useFavorites } from "../../hooks/useFavorites";
 import { usePlaybackActions } from "../../hooks/usePlaybackActions";
+import { useSuggestedTracks } from "../../hooks/useSuggestedTracks";
+import { useTrackCredits } from "../../hooks/useTrackCredits";
+import { useVideoPlayback } from "../../hooks/useVideoPlayback";
+import { useVolumeLocked } from "../../hooks/useVolumeLocked";
 import { formatTime } from "../../lib/format";
 import { getInterpolatedPosition } from "../../lib/playbackPosition";
-import { getTidalImageUrl } from "../../types";
+import {
+  getTidalImageUrl,
+  getTrackDisplayTitle,
+  type Credit,
+  type Track,
+} from "../../types";
 import {
   formatStreamQuality,
   getTrackArtistDisplay,
@@ -53,75 +81,81 @@ import {
 import { TvScreenContext, useTvInitialFocus, useTvNav } from "./TvNavContext";
 import { focusElement, focusFirstIn } from "../../lib/spatialNav";
 import { useToast } from "../../contexts/ToastContext";
-import { TvButton, TvTrackRow } from "./TvParts";
+import { TvButton, TvSpinner, TvTrackRow } from "./TvParts";
+import { artistsMenu, tvMenuRef, type TvMenuItem } from "./tvMenu";
+import { moveInQueue, queueIndexOf } from "./tvQueue";
+import { useTvPlayback } from "./useTvPlayback";
+import { viewForSource } from "./tvItems";
 import { TvLyricsPanel } from "./TvLyrics";
 import { useTvLyrics } from "./useTvLyrics";
 import { useTvMiniVideo, useTvVideoAspect } from "./useTvMiniVideo";
-
-const SEEK_STEP_SECS = 10;
-const UP_NEXT_SHOWN = 20;
+import { TV_SEEK_STEP_S, TV_VOLUME_STEP } from "./tvKeys";
+import { useTvMediaCommands } from "./useTvMediaCommands";
+import { useTvProgressive } from "./useTvProgressive";
+import { useTvGrowOnFocus } from "./useTvGrowOnFocus";
+import { useTvKeepFocus } from "./useTvKeepFocus";
 
 /** The playing video's element (the video player's, wherever it is shown). */
 function videoElement(): HTMLVideoElement | null {
   return document.querySelector<HTMLVideoElement>("[role='dialog'] video");
 }
 
-/** Re-reads the playback position a few times a second: the audio player's
- *  interpolated one, or a video's from its own element. */
-function usePosition(video: boolean): number {
+/** Re-reads the playback position twice a second while the screen is
+ *  shown: the audio player's interpolated one, or a video's from its own
+ *  element. */
+const POSITION_POLL_MS = 500;
+
+function usePosition(video: boolean, active: boolean): number {
   const read = useCallback(
     () =>
       video ? (videoElement()?.currentTime ?? 0) : getInterpolatedPosition(),
     [video],
   );
   const [pos, setPos] = useState(read);
+  const [wasActive, setWasActive] = useState(active);
+  if (active !== wasActive) {
+    setWasActive(active);
+    if (active) setPos(read());
+  }
   useEffect(() => {
-    const id = setInterval(() => setPos(read()), 250);
+    if (!active) return;
+    const id = setInterval(() => setPos(read()), POSITION_POLL_MS);
     return () => clearInterval(id);
-  }, [read]);
+  }, [read, active]);
   return pos;
 }
 
-const VOLUME_STEP = 0.05;
-
-/** Volume bar: Left/Right change it in 5% steps, Enter mutes. Locked while
- *  bit-perfect output is on, since the DAC must get unscaled samples. */
+/** Volume bar: Left/Right change it in 5% steps, Enter mutes (once per
+ *  press). Locked while bit-perfect audio plays, since the DAC must get
+ *  unscaled samples; a video's volume stays adjustable. */
 function VolumeControl() {
   const volume = useAtomValue(volumeAtom);
-  const bitPerfect = useAtomValue(bitPerfectAtom);
-  const store = useStore();
-  const { setVolume } = usePlaybackActions();
+  const locked = useVolumeLocked();
+  const media = useTvMediaCommands();
   const pct = Math.round(volume * 100);
   const Icon = volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
-  if (bitPerfect) {
+  if (locked) {
     return (
-      <span className="inline-flex items-center gap-[0.5rem] text-[0.7rem] text-th-text-muted">
+      <span className="inline-flex items-center gap-[0.5rem] text-[0.75rem] text-th-text-muted">
         <Volume2 className="w-[1.1rem] h-[1.1rem]" />
         Volume fixed (bit-perfect)
       </span>
     );
   }
 
-  const toggleMute = () => {
-    if (volume > 0) {
-      store.set(preMuteVolumeAtom, volume);
-      void setVolume(0);
-    } else {
-      void setVolume(store.get(preMuteVolumeAtom) || 0.5);
-    }
-  };
+  const toggleMute = () => media({ kind: "mute" });
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
       e.preventDefault();
-      const delta = e.key === "ArrowLeft" ? -VOLUME_STEP : VOLUME_STEP;
-      void setVolume(
-        Math.round(Math.max(0, Math.min(1, volume + delta)) * 100) / 100,
-      );
+      media({
+        kind: "volume",
+        by: e.key === "ArrowLeft" ? -TV_VOLUME_STEP : TV_VOLUME_STEP,
+      });
     } else if (e.key === "Enter") {
       e.preventDefault();
-      toggleMute();
+      if (!e.repeat) toggleMute();
     }
   };
 
@@ -145,7 +179,7 @@ function VolumeControl() {
           style={{ width: `${pct}%` }}
         />
       </span>
-      <span className="w-[2.2rem] text-right text-[0.7rem] text-th-text-secondary tabular-nums">
+      <span className="w-[2.2rem] text-right text-[0.75rem] text-th-text-secondary tabular-nums">
         {pct}%
       </span>
     </div>
@@ -166,7 +200,8 @@ function Progress({
   /** A video: position, play state and seeking go through its element. */
   video: boolean;
 }) {
-  const live = Math.min(usePosition(video), duration || Infinity);
+  const { active } = useContext(TvScreenContext);
+  const live = Math.min(usePosition(video, active), duration || Infinity);
   const audioPlaying = useAtomValue(isPlayingAtom);
   const videoPlaying = useAtomValue(videoPlayingAtom);
   const isPlaying = video ? videoPlaying : audioPlaying;
@@ -193,7 +228,7 @@ function Progress({
     if (duration <= 0) return;
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
-    const delta = e.key === "ArrowLeft" ? -SEEK_STEP_SECS : SEEK_STEP_SECS;
+    const delta = e.key === "ArrowLeft" ? -TV_SEEK_STEP_S : TV_SEEK_STEP_S;
     const next = Math.max(
       0,
       Math.min(duration - 1, (targetRef.current ?? live) + delta),
@@ -216,7 +251,10 @@ function Progress({
   };
 
   // Between position samples the bar glides instead of stepping.
-  const glide = target === null && isPlaying ? "250ms linear" : "0ms linear";
+  const glide =
+    target === null && isPlaying
+      ? `${POSITION_POLL_MS}ms linear`
+      : "0ms linear";
 
   return (
     <div className="w-full">
@@ -240,13 +278,417 @@ function Progress({
           style={{ left: `${pct}%`, transition: `left ${glide}` }}
         />
       </div>
-      <div className="mt-[0.4rem] flex justify-between text-[0.7rem] text-th-text-muted tabular-nums">
+      <div className="mt-[0.4rem] flex justify-between text-[0.75rem] text-th-text-muted tabular-nums">
         <span className={target !== null ? "text-th-text-primary" : ""}>
           {formatTime(position)}
         </span>
         <span>{duration > 0 ? formatTime(duration) : ""}</span>
       </div>
     </div>
+  );
+}
+
+/** Back up to the player (Play/Pause) once the row just played has left
+ *  the list or moved, instead of losing focus. A refused row keeps focus. */
+function focusPlayerSoon(element: () => HTMLElement | null) {
+  requestAnimationFrame(() => {
+    const el = element();
+    if (el) focusFirstIn(el);
+  });
+}
+
+/** Focuses the queue row with this queue id; false when it is not shown. */
+function focusQueueRow(list: HTMLElement | null, qid: string | undefined) {
+  const row = qid
+    ? list?.querySelector<HTMLElement>(
+        `[data-tv-row-id="${qid}"] [data-tv-focusable]`,
+      )
+    : null;
+  if (row) focusElement(row);
+  return !!row;
+}
+
+/** Up next: the manual queue, then the rest of the source, rendered a
+ *  chunk at a time as focus nears the end. Every action finds its track by
+ *  queue id when it runs, so a queue that moved on while the menu was open
+ *  never hits another track. */
+function QueuePanel() {
+  const store = useStore();
+  const queue = useAtomValue(queueAtom);
+  const manualQueue = useAtomValue(manualQueueAtom);
+  const contextSource = useAtomValue(contextSourceAtom);
+  const playbackSource = useAtomValue(playbackSourceAtom);
+  const source = contextSource ?? playbackSource;
+  const { removeFromQueue, clearQueue, setQueueTracks } = usePlaybackActions();
+  const nav = useTvNav();
+  const { playQueued, refuses } = useTvPlayback(nav.openNowPlaying);
+  const { showToast } = useToast();
+  const screen = useContext(TvScreenContext);
+  const listRef = useRef<HTMLDivElement>(null);
+  const total = manualQueue.length + queue.length;
+  const win = useTvProgressive(total);
+  useTvGrowOnFocus(listRef, win.shown, win.grow);
+  const upNext = [...manualQueue, ...queue].slice(0, win.shown);
+  const current = () => ({
+    manual: store.get(manualQueueAtom),
+    context: store.get(queueAtom),
+  });
+  // After a row leaves the list, focus the row that took its place (or the
+  // Up next tab, when the list is empty).
+  const refocusUpNext = (qid: string | undefined) =>
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (focusQueueRow(listRef.current, qid)) return;
+        const tab = screen.element()?.querySelector<HTMLElement>(SELECTED_TAB);
+        if (tab) focusElement(tab);
+      }),
+    );
+  const move = (t: Track, to: "up" | "down" | "top") => {
+    const { manual, context } = current();
+    const r = moveInQueue(manual, context, t, to);
+    if (!r) return;
+    setQueueTracks(r.tracks, { reorder: true, manualCount: r.manualCount });
+    // Moved down past the last shown row: show it before refocusing it.
+    if (queueIndexOf(r.tracks, [], t) >= win.shown) win.grow();
+    requestAnimationFrame(() => focusQueueRow(listRef.current, t._qid));
+  };
+  const remove = (t: Track) => {
+    const { manual, context } = current();
+    const at = queueIndexOf(manual, context, t);
+    if (at < 0) return;
+    const all = [...manual, ...context];
+    const neighbour = all[at + 1] ?? all[at - 1];
+    removeFromQueue(at);
+    refocusUpNext(neighbour?._qid);
+  };
+  const queueMenu = (t: Track, i: number): TvMenuItem[] => [
+    ...(i > 0
+      ? [
+          {
+            label: "Move up",
+            icon: ArrowUp,
+            onSelect: () => move(t, "up"),
+          },
+        ]
+      : []),
+    ...(i < total - 1
+      ? [
+          {
+            label: "Move down",
+            icon: ArrowDown,
+            onSelect: () => move(t, "down"),
+          },
+        ]
+      : []),
+    ...(i > 0
+      ? [
+          {
+            label: "Move to top",
+            icon: ListStart,
+            onSelect: () => move(t, "top"),
+          },
+        ]
+      : []),
+    { label: "Remove from queue", icon: ListX, onSelect: () => remove(t) },
+    {
+      label: "Clear queue",
+      icon: Trash2,
+      onSelect: () => {
+        clearQueue();
+        showToast("Queue cleared");
+        refocusUpNext(undefined);
+      },
+    },
+  ];
+
+  const row = (t: Track, i: number) => (
+    <TvTrackRow
+      key={t._qid ?? `${t.id}:${i}`}
+      track={t}
+      index={i}
+      rowId={t._qid}
+      showCover
+      menuExtra={queueMenu(t, i)}
+      onSelect={() => {
+        const { manual, context } = current();
+        const at = queueIndexOf(manual, context, t);
+        if (at < 0) return;
+        void playQueued(at);
+        if (!refuses(t)) focusPlayerSoon(screen.element);
+      }}
+    />
+  );
+  const manualShown = upNext.slice(0, manualQueue.length);
+  const contextShown = upNext.slice(manualQueue.length);
+
+  // The root is always rendered: the grow-on-focus listener attaches to it
+  // at mount.
+  return (
+    <div ref={listRef}>
+      {upNext.length === 0 && <PanelEmpty text="Nothing queued" />}
+      {manualShown.length > 0 && <QueueHeading text="Next in queue" />}
+      {manualShown.map(row)}
+      {contextShown.length > 0 && (
+        <QueueHeading
+          text={source ? `Next up from ${source.name}` : "Next up"}
+        />
+      )}
+      {contextShown.map((t, i) => row(t, manualQueue.length + i))}
+    </div>
+  );
+}
+
+function QueueHeading({ text }: { text: string }) {
+  return (
+    <h3 className="px-[1rem] pt-[0.6rem] pb-[0.4rem] text-[0.75rem] font-bold uppercase tracking-[0.15em] text-th-text-muted truncate">
+      {text}
+    </h3>
+  );
+}
+
+/** The last ten tracks played, most recent first. Playing one keeps the
+ *  queue, as in the desktop queue tab. */
+function HistoryPanel() {
+  const history = useAtomValue(historyAtom);
+  const nav = useTvNav();
+  const { playOne, refuses } = useTvPlayback(nav.openNowPlaying);
+  const screen = useContext(TvScreenContext);
+  const recent = history.slice(-10).reverse();
+
+  if (recent.length === 0) return <PanelEmpty text="Nothing played yet" />;
+  return (
+    <div>
+      {recent.map((t, i) => (
+        <TvTrackRow
+          key={`${t.id}:${i}`}
+          track={t}
+          index={i}
+          showCover
+          onSelect={() => {
+            void playOne(t);
+            if (!refuses(t)) focusPlayerSoon(screen.element);
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** The playing track's mix. Playing one keeps the queue, as in the desktop
+ *  drawer's suggested tab. */
+function SuggestedPanel() {
+  const track = useAtomValue(currentTrackAtom);
+  const { tracks, loading, error } = useSuggestedTracks(track);
+  const nav = useTvNav();
+  const { playOne, refuses } = useTvPlayback(nav.openNowPlaying);
+  const screen = useContext(TvScreenContext);
+
+  // On a track change the last suggestions stay until the new ones arrive.
+  if (loading && tracks.length === 0) return <TvSpinner />;
+  if (error || tracks.length === 0)
+    return <PanelEmpty text="No suggested tracks available for this track" />;
+  return (
+    <div>
+      {tracks.map((t, i) => (
+        <TvTrackRow
+          key={`${t.id}:${i}`}
+          track={t}
+          index={i}
+          showCover
+          onSelect={() => {
+            void playOne(t);
+            if (!refuses(t)) focusPlayerSoon(screen.element);
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** The playing track's details and credits, as in the desktop drawer
+ *  (without the bio). Every row is focusable, so the remote can scroll
+ *  through them; a role with artist pages opens the artist, or a menu of
+ *  them when there are several. */
+function CreditsPanel() {
+  const nav = useTvNav();
+  const track = useAtomValue(currentTrackAtom);
+  const loaded = useTrackCredits(track?.id);
+  // On a track change the last credits stay until the new ones arrive.
+  const [last, setLast] = useState(loaded.credits);
+  if (!loaded.loading && last !== loaded.credits) setLast(loaded.credits);
+  const credits = loaded.loading ? last : loaded.credits;
+
+  if (loaded.loading && credits.length === 0) return <TvSpinner />;
+  if (!track || (!loaded.loading && loaded.error) || credits.length === 0)
+    return <PanelEmpty text="No credits available for this track" />;
+
+  const releaseDate = track.album?.releaseDate
+    ? (() => {
+        const d = new Date(track.album.releaseDate);
+        return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+      })()
+    : null;
+  const details = (
+    [
+      ["Title", getTrackDisplayTitle(track)],
+      ["Artists", getTrackArtistDisplay(track)],
+      ["Album", track.album?.title],
+      ["Released", releaseDate],
+      ["Label", track.copyright],
+    ] as [string, string | null | undefined][]
+  ).filter((d): d is [string, string] => !!d[1]);
+  const openArtist = (a: { id: number; name: string }) =>
+    nav.push({ type: "artist", id: a.id, name: a.name });
+  const openCredit = (credit: Credit) => {
+    const linked = credit.contributors.filter(
+      (c): c is { name: string; id: number } => typeof c.id === "number",
+    );
+    if (linked.length === 0) return undefined;
+    if (linked.length === 1) return () => openArtist(linked[0]);
+    return () =>
+      nav.openMenu(artistsMenu(credit.creditType, linked, openArtist));
+  };
+
+  return (
+    <div>
+      {details.map(([label, value]) => (
+        <CreditRow key={label} label={label} value={value} />
+      ))}
+      {credits.map((credit, i) => (
+        <CreditRow
+          key={`${credit.creditType}-${i}`}
+          label={credit.creditType}
+          value={credit.contributors.map((c) => c.name).join(", ")}
+          onSelect={openCredit(credit)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CreditRow({
+  label,
+  value,
+  onSelect,
+}: {
+  label: string;
+  value: string;
+  onSelect?: () => void;
+}) {
+  const layout =
+    "tv-track flex w-full items-center gap-[1rem] px-[1rem] py-[0.7rem] rounded-[0.6rem] text-left";
+  const content = (
+    <span className="min-w-0 flex-1 flex flex-col gap-[0.2rem]">
+      <span className="text-[0.75rem] font-bold uppercase tracking-[0.15em] text-th-text-muted">
+        {label}
+      </span>
+      <span className="text-[0.95rem] font-medium text-th-text-primary break-words">
+        {value}
+      </span>
+    </span>
+  );
+
+  if (!onSelect)
+    return (
+      <div tabIndex={0} data-tv-focusable className={layout}>
+        {content}
+      </div>
+    );
+  return (
+    <button data-tv-focusable onClick={onSelect} className={layout}>
+      {content}
+      <ChevronRight
+        aria-hidden
+        className="w-[1.2rem] h-[1.2rem] shrink-0 text-th-text-muted"
+      />
+    </button>
+  );
+}
+
+function PanelEmpty({ text }: { text: string }) {
+  return (
+    <p className="px-[1rem] py-[1rem] text-[0.8rem] text-th-text-muted">
+      {text}
+    </p>
+  );
+}
+
+const SELECTED_TAB = '[role="tab"][aria-selected="true"]';
+
+/** Tabs about the track itself, not offered while a video plays. */
+const TRACK_ONLY_TABS: TvNowPlayingTab[] = ["suggested", "credits"];
+
+/** Up next / Suggested / History / Credits under the player. Focusing a
+ *  tab selects it, so Left and Right switch panels without Enter; only the
+ *  selected panel is mounted, and the last one used is kept for the
+ *  session. */
+function NowPlayingTabs({ isVideo }: { isVideo: boolean }) {
+  const queue = useAtomValue(queueAtom);
+  const manualQueue = useAtomValue(manualQueueAtom);
+  const [stored, setTab] = useAtom(tvNowPlayingTabAtom);
+  const baseId = useId();
+  const n = manualQueue.length + queue.length;
+  const tabs: { id: TvNowPlayingTab; label: string }[] = [
+    { id: "queue" as const, label: n > 0 ? `Up next · ${n}` : "Up next" },
+    { id: "suggested" as const, label: "Suggested" },
+    { id: "history" as const, label: "History" },
+    { id: "credits" as const, label: "Credits" },
+  ].filter((t) => !(isVideo && TRACK_ONLY_TABS.includes(t.id)));
+  const selected = tabs.some((t) => t.id === stored) ? stored : "queue";
+  const tabId = (id: TvNowPlayingTab) => `${baseId}-tab-${id}`;
+  const panelId = (id: TvNowPlayingTab) => `${baseId}-panel-${id}`;
+
+  return (
+    <>
+      <div
+        role="tablist"
+        aria-label="Now playing lists"
+        data-tv-remember
+        // Focusing a tab brings the strip to the top of the screen (with a
+        // little room above it), so the panel below it is in view.
+        data-tv-scroll-top
+        data-tv-keep-fallback={SELECTED_TAB}
+        className="flex items-center gap-[0.6rem] px-[1rem] pb-[0.8rem] scroll-mt-[1.5rem]"
+      >
+        {tabs.map(({ id, label }) => {
+          const on = id === selected;
+          return (
+            <button
+              key={id}
+              id={tabId(id)}
+              role="tab"
+              aria-selected={on}
+              aria-controls={panelId(id)}
+              data-tv-focusable
+              data-tv-default={on || undefined}
+              onFocus={() => setTab(id)}
+              className={`tv-button inline-flex items-center h-[2.4rem] px-[1.2rem] rounded-full font-semibold text-[0.8rem] ${
+                on ? "bg-th-button text-th-text-primary" : "text-th-text-muted"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <div
+        role="tabpanel"
+        id={panelId(selected)}
+        aria-labelledby={tabId(selected)}
+        data-tv-keep-list
+        data-tv-keep-fallback={SELECTED_TAB}
+      >
+        {selected === "history" ? (
+          <HistoryPanel />
+        ) : selected === "suggested" ? (
+          <SuggestedPanel />
+        ) : selected === "credits" ? (
+          <CreditsPanel />
+        ) : (
+          <QueuePanel />
+        )}
+      </div>
+    </>
   );
 }
 
@@ -257,13 +699,16 @@ export default function TvNowPlaying() {
   const streamInfo = useAtomValue(streamInfoAtom);
   const queue = useAtomValue(queueAtom);
   const manualQueue = useAtomValue(manualQueueAtom);
+  const source = useAtomValue(playbackSourceAtom);
+  const sourceView = viewForSource(source);
   const shuffle = useAtomValue(shuffleAtom);
   const [repeat, setRepeat] = useAtom(repeatAtom);
   const currentVideo = useAtomValue(currentVideoAtom);
   const [videoExpanded, setVideoExpanded] = useAtom(videoExpandedAtom);
   const [lyricsOn, setLyricsOn] = useAtom(tvLyricsAtom);
   const [signalPathOpen, setSignalPathOpen] = useState(false);
-  const lyrics = useTvLyrics(
+  const videoCovers = useAtomValue(videoCoversAtom);
+  const { lyrics, forId: lyricsFor } = useTvLyrics(
     track && track.itemType !== "video" ? track.id : undefined,
   );
   const {
@@ -277,20 +722,16 @@ export default function TvNowPlaying() {
   // A video's play state lives on its <video> element, not in the audio
   // player's state.
   const videoPlaying = useAtomValue(videoPlayingAtom);
-  const {
-    togglePlayPause,
-    playNext,
-    playPrevious,
-    toggleShuffle,
-    playFromQueue,
-    removeFromQueue,
-    clearQueue,
-  } = usePlaybackActions();
-  const { showToast } = useToast();
+  const { togglePlayPause, playNext, playPrevious, toggleShuffle } =
+    usePlaybackActions();
+  const { closeVideo } = useVideoPlayback();
 
   useTvInitialFocus(true);
   const screen = useContext(TvScreenContext);
-  const upNextRef = useRef<HTMLElement>(null);
+  // A new track (or a video) changes what the player shows under the
+  // remote: focus then lands on what took the place of the focused item.
+  const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  useTvKeepFocus(root, screen.active);
   const videoSlotRef = useRef<HTMLDivElement>(null);
   const showVideoInSlot =
     track?.itemType === "video" &&
@@ -302,24 +743,6 @@ export default function TvNowPlaying() {
   const videoAspect = useTvVideoAspect(
     track?.itemType === "video" && !!currentVideo,
   );
-  // After a row leaves the list, focus the row that took its place (or the
-  // player, when the list is now empty).
-  const refocusUpNext = (index: number) =>
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        const rows =
-          upNextRef.current?.querySelectorAll<HTMLElement>(
-            "[data-tv-has-menu]",
-          ) ?? [];
-        const next = rows[Math.min(index, rows.length - 1)];
-        if (next) focusElement(next);
-        else {
-          const el = screen.element();
-          if (el) focusFirstIn(el);
-        }
-      }),
-    );
-
   if (!track) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-[1rem] text-center">
@@ -340,6 +763,8 @@ export default function TvNowPlaying() {
 
   const isVideo = track.itemType === "video";
   const cover = getTidalImageUrl(trackCoverId(track), 1280);
+  const animated =
+    !isVideo && videoCovers && !!track.album?.videoCover && screen.active;
   // The backdrop is blurred anyway: a small image scaled up is soft by
   // itself and needs only a light blur, which is far cheaper to paint on
   // weak integrated graphics than a heavy blur over a full-size cover.
@@ -348,16 +773,33 @@ export default function TvNowPlaying() {
     ? favoriteVideoIds.has(track.id)
     : favoriteTrackIds.has(track.id);
   const playing = isVideo && currentVideo ? videoPlaying : isPlaying;
-  const upNext = [...manualQueue, ...queue].slice(0, UP_NEXT_SHOWN);
-  const artist = track.artist ?? track.artists?.[0];
+  const nextUp = manualQueue[0] ?? queue[0];
+  const artists = [
+    ...new Map(
+      (track.artists?.length
+        ? track.artists
+        : track.artist
+          ? [track.artist]
+          : []
+      ).map((a) => [a.id, a]),
+    ).values(),
+  ];
+  const openArtist = (a: { id: number; name: string }) =>
+    nav.push({ type: "artist", id: a.id, name: a.name });
+  // The More button's menu; the Menu key opens it from the player's buttons
+  // (not the volume control, whose Enter is its own).
+  const withTrackMenu = {
+    "data-tv-has-menu": true,
+    ref: tvMenuRef(() => nav.trackMenu(track)),
+  };
   const quality = isVideo ? "" : formatStreamQuality(streamInfo);
   const icon = "w-[1.2rem] h-[1.2rem]";
   const showLyrics = lyricsOn && !!lyrics;
 
   return (
-    // The player fills the first screen; "Up next" starts below the fold and
-    // scrolls into view only when focus moves down into it.
-    <div className="relative h-full">
+    // The player fills the first screen; the Up next / History tabs start
+    // below the fold and scroll into view only when focus moves down to them.
+    <div ref={setRoot} className="relative h-full">
       {/* Blurred cover backdrop */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         {backdrop && (
@@ -375,8 +817,16 @@ export default function TvNowPlaying() {
         className="relative h-full flex items-center gap-[3.5rem] px-[4rem] py-[2.5rem]"
       >
         {showLyrics ? (
-          <div className="shrink-0 h-[min(72vh,40rem)] w-[min(46vw,48rem)]">
-            <TvLyricsPanel lyrics={lyrics} duration={track.duration ?? 0} />
+          <div
+            data-tv-keep-list
+            data-tv-keep-fallback='[aria-label="Show cover"]'
+            className="shrink-0 h-[min(72vh,40rem)] w-[min(46vw,48rem)]"
+          >
+            <TvLyricsPanel
+              lyrics={lyrics}
+              duration={track.duration ?? 0}
+              stale={lyricsFor !== track.id}
+            />
           </div>
         ) : (
           <div
@@ -395,11 +845,22 @@ export default function TvNowPlaying() {
                 : undefined
             }
           >
-            <TidalImage
-              src={cover || undefined}
-              alt=""
-              className="w-full h-full"
-            />
+            {animated ? (
+              <TidalVideoCover
+                cover={track.album?.cover}
+                videoCover={track.album?.videoCover}
+                size={1280}
+                imageSize={1280}
+                alt=""
+                className="w-full h-full"
+              />
+            ) : (
+              <TidalImage
+                src={cover || undefined}
+                alt=""
+                className="w-full h-full"
+              />
+            )}
           </div>
         )}
 
@@ -421,12 +882,26 @@ export default function TvNowPlaying() {
               {track.album.title}
             </p>
           )}
+          {source &&
+            (sourceView ? (
+              <button
+                data-tv-focusable
+                onClick={() => nav.push(sourceView)}
+                className="tv-button mt-[0.6rem] -ml-[0.4rem] block max-w-[calc(100%+0.4rem)] origin-left truncate rounded-[0.3rem] px-[0.4rem] text-left text-[0.8rem] text-th-text-secondary"
+              >
+                Playing from {source.name}
+              </button>
+            ) : (
+              <p className="mt-[0.6rem] text-[0.8rem] text-th-text-muted truncate">
+                Playing from {source.name}
+              </p>
+            ))}
           {quality && (
             <button
               data-tv-focusable
               onClick={() => setSignalPathOpen(true)}
               title="Signal path"
-              className="tv-button mt-[0.8rem] inline-flex items-center gap-[0.5rem] rounded-[0.3rem] border border-th-border-subtle px-[0.5rem] py-[0.15rem] text-[0.6rem] font-bold tracking-[0.12em] text-th-accent"
+              className="tv-button mt-[0.8rem] inline-flex items-center gap-[0.5rem] rounded-[0.3rem] border border-th-border-subtle px-[0.5rem] py-0 text-[0.75rem] leading-[1.2rem] font-bold tracking-[0.12em] text-th-accent"
             >
               {quality}
               <span className="font-semibold tracking-normal text-th-text-muted">
@@ -435,19 +910,23 @@ export default function TvNowPlaying() {
             </button>
           )}
           {signalPathOpen && (
-            <TvNativeLayer width={680} height={720}>
+            <TvNativeLayer width={680}>
               <SignalPathPanel open onClose={() => setSignalPathOpen(false)} />
             </TvNativeLayer>
           )}
 
           <div className="mt-[2rem]">
             <Progress
+              key={track.id}
               duration={track.duration ?? 0}
               video={isVideo && !!currentVideo}
             />
           </div>
 
-          <div className="mt-[1.4rem] flex flex-wrap items-center gap-[0.8rem]">
+          <div
+            {...withTrackMenu}
+            className="mt-[1.4rem] flex flex-wrap items-center gap-[0.8rem]"
+          >
             <TvButton
               title="Shuffle"
               active={shuffle}
@@ -497,7 +976,10 @@ export default function TvNowPlaying() {
             />
           </div>
 
-          <div className="mt-[1rem] flex flex-wrap items-center gap-[0.8rem]">
+          <div
+            {...withTrackMenu}
+            className="mt-[1rem] flex flex-wrap items-center gap-[0.8rem]"
+          >
             <TvButton
               title={
                 isVideo
@@ -505,8 +987,8 @@ export default function TvNowPlaying() {
                     ? "Remove from favorites"
                     : "Add to favorites"
                   : liked
-                    ? "Remove from My Tracks"
-                    : "Add to My Tracks"
+                    ? "Remove from Loved Tracks"
+                    : "Add to Loved Tracks"
               }
               active={liked}
               icon={
@@ -543,11 +1025,23 @@ export default function TvNowPlaying() {
                 onClick={() => setVideoExpanded(true)}
               />
             )}
-            {!isVideo && artist && (
+            {isVideo && currentVideo && (
               <TvButton
-                label="Artist"
+                icon={<X className={icon} />}
+                label="Close video"
+                onClick={() => {
+                  closeVideo();
+                  focusPlayerSoon(screen.element);
+                }}
+              />
+            )}
+            {!isVideo && artists.length > 0 && (
+              <TvButton
+                label={artists.length > 1 ? "Artists" : "Artist"}
                 onClick={() =>
-                  nav.push({ type: "artist", id: artist.id, name: artist.name })
+                  artists.length > 1
+                    ? nav.openMenu(artistsMenu("Artists", artists, openArtist))
+                    : openArtist(artists[0])
                 }
               />
             )}
@@ -575,62 +1069,19 @@ export default function TvNowPlaying() {
           </div>
         </div>
 
-        {upNext.length > 0 && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-[1rem] flex items-center justify-center gap-[0.4rem] text-[0.7rem] text-th-text-muted">
+        {nextUp && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-[1rem] flex items-center justify-center gap-[0.4rem] text-[0.75rem] text-th-text-muted">
             <ChevronDown className="w-[1rem] h-[1rem]" />
             <span className="truncate max-w-[40rem]">
-              Up next: {upNext[0].title}
+              Up next: {nextUp.title}
             </span>
           </div>
         )}
       </div>
 
-      {upNext.length > 0 && (
-        <section
-          ref={upNextRef}
-          className="relative px-[3rem] pt-[1.5rem] pb-[3rem]"
-        >
-          <h2 className="text-[1.05rem] font-bold text-th-text-primary px-[1rem] mb-[0.4rem]">
-            Up next
-          </h2>
-          {upNext.map((t, i) => (
-            <TvTrackRow
-              key={t._qid ?? `${t.id}:${i}`}
-              track={t}
-              index={i}
-              showCover
-              menuExtra={[
-                {
-                  label: "Remove from queue",
-                  icon: ListX,
-                  onSelect: () => {
-                    removeFromQueue(i);
-                    refocusUpNext(i);
-                  },
-                },
-                {
-                  label: "Clear queue",
-                  icon: Trash2,
-                  onSelect: () => {
-                    clearQueue();
-                    showToast("Queue cleared");
-                    refocusUpNext(0);
-                  },
-                },
-              ]}
-              onSelect={() => {
-                void playFromQueue(i);
-                // The row just played leaves the list; go back up to the
-                // player (Play/Pause) instead of losing focus.
-                requestAnimationFrame(() => {
-                  const el = screen.element();
-                  if (el) focusFirstIn(el);
-                });
-              }}
-            />
-          ))}
-        </section>
-      )}
+      <section className="relative px-[3rem] pt-[1.5rem] pb-[3rem]">
+        <NowPlayingTabs isVideo={isVideo} />
+      </section>
     </div>
   );
 }

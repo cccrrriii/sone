@@ -77,6 +77,36 @@ html.tv-mode {
   box-shadow: inset 0 0 0 0.12rem var(--th-accent);
 }
 
+/* A cut-off title ends in an ellipsis; when its item is focused it glides
+   to its end and back once (armed by armMarquee, which sets the shift and
+   re-arms it on every focus). */
+.tv-marquee {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@keyframes tv-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--tv-marquee-shift));
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  [data-tv-focusable]:focus
+    .tv-marquee[data-overflow]:not([data-marquee-done]) {
+    text-overflow: clip;
+  }
+  [data-tv-focusable]:focus
+    .tv-marquee[data-overflow]:not([data-marquee-done])
+    > span {
+    display: inline-block;
+    animation: tv-marquee var(--tv-marquee-duration) linear 1s 2 alternate;
+  }
+}
+
 .tv-progress:focus {
   box-shadow: 0 0 0 0.15rem var(--th-accent);
 }
@@ -104,6 +134,45 @@ html.tv-mode {
   color: var(--th-text-primary);
 }
 
+/* The action menu slides in from the right like the rail from the left,
+   and out again (TvMenuHost keeps it drawn for MENU_SLIDE_MS). Its own
+   layer, so the slide moves it instead of repainting it. */
+.tv-menu-panel {
+  animation: tv-menu-in 180ms ease-out;
+  will-change: transform;
+}
+.tv-menu-panel[data-closing] {
+  animation: tv-menu-out 180ms ease-in forwards;
+}
+@keyframes tv-menu-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+@keyframes tv-menu-out {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Focus and the rail change at once, without the zoom or the slide. */
+@media (prefers-reduced-motion: reduce) {
+  .tv-card,
+  .tv-card-art,
+  .tv-button,
+  .tv-key,
+  .tv-input,
+  .tv-rail {
+    transition: none;
+  }
+  .tv-menu-panel {
+    animation: none;
+  }
+  .tv-menu-panel[data-closing] {
+    visibility: hidden;
+  }
+}
+
 /* The desktop settings sheet opened from TV mode: give its controls the
    same visible focus ring as the TV screens. */
 .tv-mode [data-tv-native] :focus {
@@ -113,9 +182,44 @@ html.tv-mode {
   border-radius: 8px;
 }
 
+/* Hosted desktop dialogs fit the screen height inside the margin, in the
+   layer's own (unzoomed) px. */
+.tv-mode [data-tv-native] [data-tv-sheet] {
+  height: min(var(--tv-native-fit-h), 740px);
+}
+.tv-mode [data-tv-native] [data-tv-fit] {
+  max-height: var(--tv-native-fit-h);
+  overflow-y: auto;
+}
+
 /* Toasts are sized in px for the desktop; scale them up on a TV. */
 .tv-mode .sone-toasts {
   zoom: var(--tv-px-scale, 1);
+}
+
+/* The proxy notice is sized in px for the desktop; scale it up on a TV.
+   12px (not its 11.5px) so the text stays at 0.75rem once zoomed. */
+.tv-mode .sone-proxy-banner {
+  zoom: var(--tv-px-scale, 1);
+}
+.tv-mode .sone-proxy-banner :is(span, button) {
+  font-size: 12px;
+}
+.tv-mode .sone-proxy-banner button:focus {
+  box-shadow: 0 0 0 3px var(--th-text-primary);
+  outline: none;
+}
+
+/* Overlays outside the TV shell (menu, prompt) keep their content inside
+   the screen margin; their backdrop still covers the whole screen. */
+.tv-mode .tv-overlay {
+  padding: var(--tv-safe-y, 0px) var(--tv-safe-x, 0px);
+}
+
+/* The full-screen video sits inside the screen margin, black around it. */
+.tv-mode [data-tv-video]:not(.hidden):not([data-tv-video-mini]) {
+  inset: var(--tv-safe-y, 0px) var(--tv-safe-x, 0px);
+  box-shadow: 0 0 0 100vmax #000;
 }
 
 /* The video player's control bars are sized in px for the desktop; scale
@@ -133,13 +237,29 @@ html.tv-mode {
 }
 
 /* The full-screen video keeps only what a remote needs: like, previous,
-   play/pause, next and quality. Shuffle, repeat and the rest live in Now
-   Playing; Back minimizes. */
+   play/pause, next, quality and volume. Shuffle, repeat and the rest live in
+   Now Playing; Back minimizes. */
 .tv-mode [data-tv-video] button[title="Shuffle"],
 .tv-mode [data-tv-video] button[title="Repeat"],
-.tv-mode [data-tv-video] button[title="Minimize video"],
-.tv-mode [data-tv-video] .group\/vol {
+.tv-mode [data-tv-video] button[title="Minimize video"] {
   display: none;
+}
+
+/* The volume slider is the last control, so Left/Right on it (which change
+   the volume) never cut the remote off from another button. Its range input
+   is transparent: the group shows the focus ring and the thumb while the
+   slider has focus (the speaker button keeps its own ring). */
+.tv-mode [data-tv-video] .group\/vol {
+  order: 1;
+}
+.tv-mode [data-tv-video] .group\/vol:has(input:focus) {
+  outline: 3px solid var(--th-text-primary);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 7px color-mix(in srgb, var(--th-accent) 45%, transparent);
+  border-radius: 8px;
+}
+.tv-mode [data-tv-video] .group\/vol:has(input:focus) .shadow-sm {
+  opacity: 1;
 }
 
 /* Minimized, the video plays on in Now Playing where the cover would be

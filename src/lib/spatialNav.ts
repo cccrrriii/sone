@@ -22,8 +22,17 @@ export interface Box {
 // TV mode) every natively focusable control counts, without markup changes.
 const FOCUSABLE =
   "[data-tv-focusable], [data-tv-native] :is(button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1']))";
+// The same, for a scope already inside a `data-tv-native` container (a
+// confirmation over the settings sheet); jsdom can't match FOCUSABLE's
+// ancestor from there.
+const NATIVE_FOCUSABLE =
+  "[data-tv-focusable], button, input, select, textarea, a[href], [tabindex]:not([tabindex='-1'])";
 const REMEMBER = "[data-tv-remember]";
 const SIDE = "[data-tv-side]";
+// The mini bar: moveFocus never enters it from outside (only dockFallback
+// does); from inside, only Up leaves it.
+const DOCK = "[data-tv-dock]";
+const CLIP = "[data-tv-clip]";
 
 /** How much the sideways offset counts against the forward distance. A
  *  candidate straight ahead beats a nearer one far off to the side. */
@@ -95,28 +104,55 @@ function gap(
   return Math.abs(aCenter - bCenter);
 }
 
-function isVisible(el: HTMLElement): boolean {
+export function isShown(el: HTMLElement): boolean {
   if ((el as HTMLButtonElement).disabled) return false;
   const r = el.getBoundingClientRect();
   return r.width > 0 && r.height > 0;
 }
 
+function focusablesIn(scope: ParentNode): NodeListOf<HTMLElement> {
+  const native =
+    scope instanceof Element &&
+    !!scope.parentElement?.closest("[data-tv-native]");
+  return scope.querySelectorAll<HTMLElement>(
+    native ? NATIVE_FOCUSABLE : FOCUSABLE,
+  );
+}
+
 /** Visible focusables in `scope` with their boxes. Reading a box costs real
- *  time on a long track list, so each one is read once per move. */
+ *  time on a long track list, so each one is read once per move. Inside a
+ *  `data-tv-clip` container (a scroller that hides its overflow) only items
+ *  within the container's box count, unless focus is in that container
+ *  already (a held arrow can outrun its smooth scroll). */
 function measure(scope: ParentNode): Map<HTMLElement, DOMRect> {
   const boxes = new Map<HTMLElement, DOMRect>();
-  for (const el of scope.querySelectorAll<HTMLElement>(FOCUSABLE)) {
+  const clips = new Map<Element, DOMRect>();
+  const current = document.activeElement;
+  for (const el of focusablesIn(scope)) {
     if ((el as HTMLButtonElement).disabled) continue;
     const r = el.getBoundingClientRect();
-    if (r.width > 0 && r.height > 0) boxes.set(el, r);
+    if (r.width <= 0 || r.height <= 0) continue;
+    const clip = el.closest(CLIP);
+    if (clip && !clip.contains(current)) {
+      let c = clips.get(clip);
+      if (!c) {
+        c = clip.getBoundingClientRect();
+        clips.set(clip, c);
+      }
+      const inside =
+        r.left < c.right &&
+        r.right > c.left &&
+        r.top < c.bottom &&
+        r.bottom > c.top;
+      if (!inside) continue;
+    }
+    boxes.set(el, r);
   }
   return boxes;
 }
 
 function focusableIn(scope: ParentNode): HTMLElement[] {
-  return Array.from(scope.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-    isVisible,
-  );
+  return Array.from(focusablesIn(scope)).filter(isShown);
 }
 
 const lastFocused = new WeakMap<Element, HTMLElement>();
@@ -130,21 +166,39 @@ export function rememberFocus(el: HTMLElement) {
   }
 }
 
+/** Focus `scope`'s last focused child (a `data-tv-remember` group) when it is
+ *  still on screen, else its first item. */
+export function focusRememberedIn(scope: HTMLElement): boolean {
+  const prev = lastFocused.get(scope);
+  if (prev && prev.isConnected && scope.contains(prev) && isShown(prev)) {
+    focusElement(prev);
+    return true;
+  }
+  return focusFirstIn(scope);
+}
+
 /** If `target` sits in a remembering group that `from` is outside of, the
  *  group's last focused child (when it is still on screen) wins. The
  *  outermost such group decides, so re-entering the content area from the
- *  nav rail lands where the user left off rather than in the nearest row. */
+ *  nav rail lands where the user left off rather than in the nearest row.
+ *  Entering a side panel lands on its `data-tv-default` child first, so the
+ *  rail opens on the current section rather than the last item passed. */
 function resolveRemembered(from: HTMLElement, target: HTMLElement) {
+  const side = target.closest(SIDE);
+  if (side && !side.contains(from)) {
+    const entry = side.querySelector<HTMLElement>("[data-tv-default]");
+    if (entry && isShown(entry)) return entry;
+  }
   let chosen = target;
   let group = target.parentElement?.closest(REMEMBER) ?? null;
   while (group && !group.contains(from)) {
     const prev = lastFocused.get(group);
-    if (prev && prev.isConnected && isVisible(prev) && group.contains(prev)) {
+    if (prev && prev.isConnected && isShown(prev) && group.contains(prev)) {
       chosen = prev;
     } else {
       // Never visited: the group's designated entry point, if it has one.
       const entry = group.querySelector<HTMLElement>("[data-tv-default]");
-      if (entry && isVisible(entry)) chosen = entry;
+      if (entry && isShown(entry)) chosen = entry;
     }
     group = group.parentElement?.closest(REMEMBER) ?? null;
   }
@@ -172,7 +226,7 @@ export function focusElement(el: HTMLElement) {
         root.scrollTop = 0;
         break;
       }
-      if (isVisible(other) && other.getBoundingClientRect().bottom <= top) {
+      if (isShown(other) && other.getBoundingClientRect().bottom <= top) {
         break;
       }
     }
@@ -202,10 +256,11 @@ export function moveFocus(
   // behind it, while Left/Right at the end of a row falls through to the
   // next group out.
   const from = boxes.get(current)!;
-  // A side panel (`data-tv-side`, the nav rail) is entered sideways only:
-  // Up/Down past the top or bottom of the content must not land in it.
+  // A side panel (`data-tv-side`, the nav rail) is entered and left sideways
+  // only: Up/Down past either end of the content or of the panel stays put.
   const sideways = dir === "left" || dir === "right";
-  const inSide = !!current.closest(SIDE);
+  const side = current.closest(SIDE);
+  const inSide = !!side;
   // Left/Right stay on the current line: at the end of a row nothing
   // happens, rather than jumping diagonally into the next row. A side panel
   // (the rail) is reachable sideways from anywhere, and leaving it lands on
@@ -214,12 +269,14 @@ export function moveFocus(
     const r = boxes.get(el)!;
     return r.top < from.bottom && r.bottom > from.top;
   };
+  const dock = current.closest(DOCK);
   const others = all.filter(
     (el) =>
       el !== current &&
+      (dock ? dir === "up" || el.closest(DOCK) === dock : !el.closest(DOCK)) &&
       (sideways
         ? inSide || (el.closest(SIDE) ? enterSide : onLine(el))
-        : inSide || !el.closest(SIDE)),
+        : el.closest(SIDE) === side),
   );
   let group: Element | null = current.parentElement?.closest(REMEMBER) ?? null;
   while (true) {
@@ -238,11 +295,42 @@ export function moveFocus(
   }
 }
 
+function focusDock(scope: HTMLElement): boolean {
+  const dock = scope.querySelector<HTMLElement>(DOCK);
+  if (!dock) return false;
+  const preferred = dock.querySelector<HTMLElement>("[data-tv-default]");
+  const el = preferred && isShown(preferred) ? preferred : focusableIn(dock)[0];
+  if (!el) return false;
+  focusElement(el);
+  return true;
+}
+
+/** Down with nothing below: a fresh press from the active screen's content
+ *  (not a side panel, a modal or the dock itself) reaches the dock, unless
+ *  the screen is still loading more rows. */
+export function dockFallback(
+  scope: HTMLElement,
+  opts: { repeat: boolean },
+): boolean {
+  if (opts.repeat) return false;
+  const current = document.activeElement;
+  const screen = scope.querySelector(".tv-screen:not(.hidden)");
+  if (!current || !screen || !screen.contains(current)) return false;
+  if (current.closest(`${SIDE}, ${DOCK}, [data-tv-modal]`)) return false;
+  if (
+    screen.matches("[data-tv-loading]") ||
+    screen.querySelector("[data-tv-loading]")
+  ) {
+    return false;
+  }
+  return focusDock(scope);
+}
+
 /** Focus the element marked `data-tv-autofocus`, else the first focusable. */
 export function focusFirstIn(scope: HTMLElement): boolean {
   const preferred = scope.querySelector<HTMLElement>("[data-tv-autofocus]");
   const el =
-    preferred && isVisible(preferred) ? preferred : focusableIn(scope)[0];
+    preferred && isShown(preferred) ? preferred : focusableIn(scope)[0];
   if (!el) return false;
   focusElement(el);
   return true;

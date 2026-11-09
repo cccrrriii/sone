@@ -3,7 +3,7 @@
 >
 > - For the official app, installation and support, go to **[lullabyX/sone](https://github.com/lullabyX/sone)**.
 > - Please report problems with SONE itself there. Only report problems with the TV mode here.
-> - The TV mode has been proposed upstream in [lullabyX/sone#242](https://github.com/lullabyX/sone/issues/242).
+> - The TV mode is proposed upstream in [lullabyX/sone#260](https://github.com/lullabyX/sone/pull/260); this build follows that pull request, including the SONE developer's own changes to it.
 > - Unofficial builds with the TV mode: [tv-build release](https://github.com/cccrrriii/sone/releases/tag/tv-build). See [TV mode](#tv-mode) below for how to use it.
 
 <div align="center">
@@ -68,7 +68,7 @@ We went beyond the basics with direct-to-DAC bit-perfect ALSA output, a resizabl
 - **Bit-perfect output** — no resampling, no dithering. Your DAC receives the unaltered decoded signal
 - **Exclusive ALSA** — bypasses PipeWire/PulseAudio entirely for direct hardware access
 - **Smart DAC matching** — automatically detects your hardware's supported formats and sample rates, picking the best fit
-- **Signal Path Transparency** — see exactly what your audio is going through end-to-end. Probes the live GStreamer pipeline, OS mixer (`pactl`), and ALSA card (`/proc/asound`); flags every conversion, format mismatch, or volume alteration with a PRISTINE verdict for bit-clean playback
+- **Signal Path Transparency** — see exactly what your audio is going through end-to-end. Probes the live GStreamer pipeline, follows your stream through the OS mixer (`pactl`) and any virtual sinks to the real output device, and reads that ALSA card's live hardware parameters; shows where resampling happens and flags every conversion, format mismatch, or volume alteration with a PRISTINE verdict for bit-clean playback
 - **Volume normalization** (ReplayGain) with automatic context switching between album and track gain
 - **Autoplay** — discovers and plays similar tracks when your queue ends
 - **Gapless playback** — seamless, silence-free transitions between tracks in normal output mode. On by default, with automatic fallback when unavailable
@@ -82,10 +82,10 @@ We went beyond the basics with direct-to-DAC bit-perfect ALSA output, a resizabl
 ### Interface
 
 - **Custom themes** — 15 presets and a full color picker for accent and background with both light/dark mode
-- **Lyrics** — synced lyrics display for supported tracks
+- **Lyrics** — synced lyrics display for supported tracks; click any line to jump to it
 - **Miniplayer** — compact floating window with album art, playback controls, and resizable-adaptive layout
 - **Full-screen player** — maximized view with album art, lyrics option and auto-hiding controls
-- **TV mode** — a fullscreen 10-foot interface for a TV or media PC, driven entirely by arrow keys, Enter and Back (a remote, a gamepad mapped to keys, or a keyboard)
+- **TV mode** — a fullscreen 10-foot interface for a TV or media PC, driven entirely by arrow keys, Enter and Back (a remote, a gamepad or a keyboard)
 - **Queue persistence** — picks up where you left off across restarts
 - **MPRIS integration** — media keys, shuffle, repeat, seek, and desktop widget support
 - **System tray** with playback controls and minimize-to-tray
@@ -94,6 +94,7 @@ We went beyond the basics with direct-to-DAC bit-perfect ALSA output, a resizabl
 ### Library
 
 - **Library management** — browse and sort your playlists, albums, artists, and mixes with playlist folder support
+- **Content filters** — hide explicit or AI-generated tracks; filtered items are greyed out and never play, and AI-labelled content carries a badge everywhere
 - **Share** — share tracks, albums, playlists, artists, and mixes with your friends via a direct TIDAL link
 - **Deep links** — open `tidal://` URLs directly in SONE
 - **Profile** — edit your bio, social links, and avatar
@@ -397,11 +398,7 @@ Output goes to `dist/<format>/`. Pass `--no-cache` to force a clean Docker build
 3. Your library loads automatically — browse and play!
 
 > [!NOTE]
-> **NVIDIA GPU users:** If you see a blank window, rendering glitches, or a Wayland protocol error on launch, start the app with:
->
-> ```bash
-> WEBKIT_DISABLE_COMPOSITING_MODE=1 sone
-> ```
+> **Rendering:** SONE picks its rendering path automatically. If you see a blank window, rendering glitches, or high CPU use, change it under **Settings → General → Rendering** (Auto / GPU / CPU). After the restart, a 40-second keep-or-revert prompt switches back to the previous mode on its own if you can't confirm the new one, so a blank window recovers without any action.
 
 <details>
 <summary>Troubleshooting</summary>
@@ -422,22 +419,21 @@ If it's missing, install the GStreamer "bad" plugin set and restart SONE — `gs
 SONE automatically detects your DAC's supported formats and sample rates, but if playback still fails, your hardware may not support the source format at all. Try a lower quality tier or switch to normal output mode.
 
 **"Error 71 (Protocol error) dispatching to Wayland display" on launch?**
-This is a known WebKitGTK/Wayland issue affecting Tauri apps on systems with NVIDIA GPUs ([tauri-apps/tauri#10702](https://github.com/tauri-apps/tauri/issues/10702)). As a workaround, launch SONE with the DMA-BUF renderer disabled:
-
-```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 sone
-```
+This is a known WebKitGTK/Wayland issue affecting Tauri apps on systems with NVIDIA GPUs ([tauri-apps/tauri#10702](https://github.com/tauri-apps/tauri/issues/10702)). On **Auto**, SONE already disables the DMA-BUF renderer when it detects an NVIDIA GPU. If you see the error after switching **Settings → General → Rendering** to **GPU**, the next launch reverts to the previous mode; if you see it on **Auto**, set the mode to **CPU** or use the advanced override below.
 
 If you're using X11 or don't have an NVIDIA GPU but still see this error, try updating your WebKitGTK and graphics drivers to the latest versions.
 
-**Blank window or rendering glitches on NVIDIA?**
-If the app launches but shows a blank/white window or has visual artifacts, try disabling WebKit's compositing mode:
+**Blank window, rendering glitches or high CPU use?**
+Try the other modes under **Settings → General → Rendering**: **GPU** keeps hardware acceleration on (lower CPU use), **CPU** renders in software (most compatible). If the window stays blank after switching, wait for the 40-second trial to revert the change.
+
+**Advanced override:** the WebKitGTK environment variables still work. A variable set in the environment wins over **Auto**:
 
 ```bash
+WEBKIT_DISABLE_DMABUF_RENDERER=1 sone
 WEBKIT_DISABLE_COMPOSITING_MODE=1 sone
 ```
 
-This is a known issue with NVIDIA's proprietary drivers and WebKitGTK hardware acceleration.
+On WebKitGTK 2.54 and newer, `WEBKIT_DISABLE_COMPOSITING_MODE=1` gives a black window on NVIDIA, so prefer the **Settings → General → Rendering** choice.
 
 </details>
 
@@ -445,13 +441,19 @@ This is a known issue with NVIDIA's proprietary drivers and WebKitGTK hardware a
 
 For a media PC hooked up to a TV, SONE has a separate fullscreen interface built for the couch: large covers, a focus highlight you can see from across the room, and nothing that needs a mouse.
 
-- **Turn it on** from the user menu (**TV mode**) or **Settings → General → TV**. Choose **Exit TV mode** at the bottom of the side rail to go back.
-- **Start straight into it** with `sone --tv` (or `SONE_TV_MODE=1 sone`) — handy for an autostart entry. Running `sone --tv` while SONE is already open switches that window over.
-- **Controls:** arrow keys move the focus, **Enter** opens or plays, **Back / Escape / Backspace** goes back, **Space** or the media keys play/pause and skip. On the Now Playing screen, focus the progress bar and use **← / →** to seek 10 s, or the volume bar to change the volume (**Enter** mutes).
-- **Action menu:** hold **Enter** (or press the **Menu** key) on a track, album, playlist, mix or artist — or pick the **⋯** button — to play next, add to the queue or a playlist, like, start a track radio or jump to the album/artist.
-- **Screens:** Home feed, Search (on-screen keyboard, or just type on a keyboard), My Collection (playlists, albums, artists, mixes, My Tracks), album / playlist / mix / artist pages, a Now Playing screen with lyrics and the queue, and Settings (audio quality, exclusive / bit-perfect output and device, playback options, themes). **More settings** opens the full desktop settings, navigable with the arrow keys.
+- **Turn it on** from the user menu (**TV mode**) or **Settings → General → TV mode**. **Exit TV mode** at the bottom of the side rail (or in TV settings) goes back to the desktop layout.
+- **Start straight into it** with `sone --tv` (or `SONE_TV_MODE=1 sone`), handy for an autostart entry. Either one applies to that run only and leaves your saved choice unchanged; **Exit TV mode** ends it. Running `sone --tv` while SONE is already open switches that window over; `SONE_TV_MODE=1` is read only by the first instance, so use `sone --tv` to switch a SONE that is already running.
+- **Controls:** the arrow keys move the focus, **Enter** opens or plays, **Back / Escape / Backspace** goes back, **Home** jumps to the side rail (and back), and the media keys play/pause, skip, seek and change the volume. Holding **Enter** (or pressing the **Menu** key) on a track, album, playlist, mix or artist opens its action menu; the **⋯** buttons do the same. Long titles scroll while focused.
+- **Gamepads** move the focus too (A opens, B goes back, LT / RT turn the volume down / up, View / Create opens the side rail). They need a WebKitGTK built with gamepad support and a native, AUR, `.deb` or AppImage install, or the snap after `snap connect sone:joystick`; the Flatpak has no access to input devices.
+- **Screens:** Home (with its tabs, quick access and **Load more**), Search, Explore, Feed, My Collection (playlists with folders and the ones you liked, albums, artists, mixes and videos, each with "View all", **Sort** and **Filter**), album / playlist / mix / artist pages, Now Playing and Settings (audio quality, exclusive / bit-perfect output, playback and content options, themes, screen margin for TVs that cut off the edges, account). **More settings** opens the full desktop settings, navigable with the arrow keys; **Enter** on one of their text fields opens the on-screen keyboard.
+- **Search:** type with the on-screen keyboard (with **Shift** and a **Symbols** layer) or a real one. Results start with Top hits, and each row has "View all". Recent searches are shared with the desktop search box; TV adds one when you open a result, press the keyboard's **Search** key or press **Enter** in the search box.
+- **Now Playing** opens over the screen you're on (from the rail, the mini bar, or when you start playback), and Back returns you there. Going to an album or artist from it and pressing Back brings Now Playing back. Its tabs (Up next, Suggested, History, Credits) switch as you move across them, and the last one used stays selected for the session.
+- **Volume:** the volume keys change SONE's volume, and an indicator shows the level after any change. With bit-perfect output on, the volume stays fixed and the indicator says so.
+- **Action menu:** play next, add to the queue or a playlist (or a **New playlist…**, private or public), add to Loved Tracks or your collection, track radio, credits, go to album / artist; remove from the queue or from your own playlist; move a playlist into a folder; **Edit details** (name, description) or delete your own playlists.
+- **Videos** play full screen with remote controls (Enter pauses, ← / → skip 10 s, ↑ / ↓ reach the buttons; on the volume slider ← / → change the volume, and Enter on the speaker icon mutes, then restores the earlier level). Back minimises the video and keeps it playing in Now Playing, where **Close video** sits next to **Full screen**.
+- **Signing in:** signed out in TV mode, SONE offers to sign in on the TV (TIDAL's sign-in page, scaled for the screen; needs a keyboard, full quality) or with a phone by scanning a QR code (nothing to type, but TIDAL limits that kind of sign-in to High quality).
 
-The interface scales with the screen width, so it looks the same at 720p, 1080p and 4K. Most remotes that show up as a keyboard (IR receivers, HDMI-CEC adapters, Bluetooth remotes) work out of the box; if yours sends other keys, map them to the arrows, Enter and Escape.
+The interface scales with the screen, so it looks the same at 720p, 1080p and 4K. Most remotes that show up as a keyboard (IR receivers, HDMI-CEC adapters, Bluetooth remotes) work out of the box; if yours sends other keys, map them to the arrows, Enter and Escape.
 
 ## Custom theme file
 
@@ -606,13 +608,15 @@ Leave that running and SONE will find it. Run it before starting SONE, or restar
 
 ## Contributing
 
-Issues and pull requests are welcome on [GitHub](https://github.com/lullabyX/sone). To set up a development environment, follow the [Building from source](#building-from-source) instructions.
+Issues and pull requests are welcome on [GitHub](https://github.com/lullabyX/sone). To set up a development environment, follow the [Building from source](#building-from-source) instructions. AI-assisted contributions are welcome, as long as they're reviewed and manually tested.
 
 If you enjoy using SONE, consider giving the project a star to help others find it.
 
 ## Disclaimer
 
 SONE is an independent, community-driven project. It is **not affiliated with, endorsed by, or connected to TIDAL** in any way. All content is streamed directly from TIDAL's service and requires a valid paid subscription. SONE is a streaming client only — it does not support offline downloads, and does not redistribute or circumvent protection of any content. As with any third-party client, please be aware of TIDAL's terms of use.
+
+SONE is developed with AI assistance; every change is reviewed and tested before release.
 
 All trademarks belong to their respective owners.
 

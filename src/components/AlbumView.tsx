@@ -9,11 +9,12 @@ import {
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useToast } from "../contexts/ToastContext";
 import SourcePlayButton from "./SourcePlayButton";
-import { usePlaybackActions } from "../hooks/usePlaybackActions";
+import { usePlaySource } from "../hooks/usePlaySource";
 import { useFavorites } from "../hooks/useFavorites";
 import { useNavigation } from "../hooks/useNavigation";
 import { getAlbumPage } from "../api/tidal";
 import { getApiStatus, safeErrorMessage } from "../lib/errorUtils";
+import type { PlayableSource } from "../lib/trackSources";
 import NotFoundPage from "./NotFoundPage";
 import {
   type Track,
@@ -24,6 +25,7 @@ import TidalVideoCover from "./TidalVideoCover";
 import CoverBanner from "./CoverBanner";
 import { getTidalImageUrl, getTidalArtistImageUrl } from "../types";
 import TrackList from "./TrackList";
+import AiBadge from "./AiBadge";
 import { TrackArtists } from "./TrackArtists";
 import MediaContextMenu from "./MediaContextMenu";
 import { DetailPageSkeleton } from "./PageSkeleton";
@@ -65,8 +67,7 @@ export default function AlbumView({
   albumInfo,
   onBack,
 }: AlbumViewProps) {
-  const { playTrack, setShuffledQueue, playFromSource, playAllFromSource } =
-    usePlaybackActions();
+  const playSource = usePlaySource();
   const {
     favoriteAlbumIds,
     addFavoriteAlbum,
@@ -154,47 +155,24 @@ export default function AlbumView({
   }, [tracks]);
   const isMultiVolume = volumeGroups.size > 1;
 
-  const albumSource = {
-    type: "album" as const,
-    id: albumId,
-    name: album?.title || albumInfo?.title || "Album",
-    allTracks: tracks,
-  };
+  const albumPlayable = (): PlayableSource => ({
+    meta: {
+      type: "album",
+      id: albumId,
+      name: album?.title || albumInfo?.title || "Album",
+    },
+    loaded: tracks,
+    albumMode: true,
+  });
 
-  const handlePlayTrack = async (track: Track, _index: number) => {
-    try {
-      await playFromSource(track, tracks, {
-        albumMode: true,
-        source: albumSource,
-      });
-    } catch (err) {
-      console.error("Failed to play track:", err);
-    }
+  const handlePlayTrack = (track: Track, _index: number) => {
+    void playSource(albumPlayable(), { startAt: track });
   };
-
-  const handlePlayAll = async () => {
-    if (tracks.length === 0) return;
-    try {
-      await playAllFromSource(tracks, { albumMode: true, source: albumSource });
-    } catch (err) {
-      console.error("Failed to play all:", err);
-    }
+  const handlePlayAll = () => {
+    void playSource(albumPlayable());
   };
-
-  const handleShuffle = async () => {
-    if (tracks.length === 0) return;
-    const shuffled = [...tracks];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    const [first, ...rest] = shuffled;
-    try {
-      setShuffledQueue(rest, { source: albumSource, albumMode: true });
-      await playTrack(first);
-    } catch (err) {
-      console.error("Failed to shuffle play:", err);
-    }
+  const handleShuffle = () => {
+    void playSource(albumPlayable(), { shuffle: true });
   };
 
   const [contextMenu, setContextMenu] = useState<{
@@ -233,10 +211,10 @@ export default function AlbumView({
   );
   const qualityBadgeClass =
     qualityBadge?.tier === "max"
-      ? "bg-th-accent/20 backdrop-blur-md text-th-text-primary"
+      ? "bg-th-accent/20 text-th-text-primary"
       : qualityBadge?.tier === "hifi"
-        ? "bg-th-accent/15 backdrop-blur-md text-th-text-primary"
-        : "bg-th-button-hover/40 backdrop-blur-md text-th-text-primary";
+        ? "bg-th-accent/15 text-th-text-primary"
+        : "bg-th-button-hover/40 text-th-text-primary";
 
   const albumMediaItem: MediaItemType = {
     id: albumId,
@@ -358,7 +336,7 @@ export default function AlbumView({
 
   if (error) {
     return (
-      <div className="flex-1 bg-linear-to-b from-th-surface to-th-base flex items-center justify-center">
+      <div className="flex-1 page-gradient flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center px-8">
           <Music size={48} className="text-th-text-disabled" />
           <p className="text-th-text-primary font-semibold text-lg">
@@ -377,7 +355,7 @@ export default function AlbumView({
   }
 
   return (
-    <div className="flex-1 bg-linear-to-b from-th-surface to-th-base overflow-y-auto scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent">
+    <div className="flex-1 page-gradient overflow-y-auto scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent">
       {/* Album Header */}
       <div className="relative">
         <CoverBanner
@@ -386,14 +364,16 @@ export default function AlbumView({
         />
         <PageContainer>
           <div className="px-8 pb-8 pt-8 flex items-end gap-7 relative z-10">
-            <div className="w-[232px] h-[232px] shrink-0 rounded-lg overflow-hidden shadow-[0_16px_48px_8px_rgba(0,0,0,0.55)] bg-th-surface-hover">
-              <TidalVideoCover
-                cover={displayCover}
-                videoCover={album?.videoCover}
-                size={640}
-                alt={displayTitle}
-                className="w-full h-full"
-              />
+            <div className="relative shrink-0 cover-glow">
+              <div className="w-[232px] h-[232px] rounded-lg overflow-hidden bg-th-surface-hover">
+                <TidalVideoCover
+                  cover={displayCover}
+                  videoCover={album?.videoCover}
+                  size={640}
+                  alt={displayTitle}
+                  className="w-full h-full"
+                />
+              </div>
             </div>
             <div className="flex flex-col gap-2 pb-1 min-w-0">
               <span className="text-[12px] font-bold text-th-text-secondary uppercase tracking-widest">
@@ -434,9 +414,10 @@ export default function AlbumView({
                 </div>
               )}
 
-              {(releaseYear || qualityBadge) && (
+              {(releaseYear || qualityBadge || album?.ai) && (
                 <div className="flex items-center gap-2 text-[12px] text-th-text-muted">
                   {releaseYear && <span>{releaseYear}</span>}
+                  {album?.ai && <AiBadge />}
                   {qualityBadge && (
                     <span
                       className={`px-2 py-0.5 text-[10px] font-semibold rounded tracking-wider leading-none ${qualityBadgeClass}`}
@@ -459,7 +440,7 @@ export default function AlbumView({
               />
               <button
                 onClick={handleShuffle}
-                className="flex items-center gap-2 px-6 py-2.5 bg-th-button/40 backdrop-blur-md text-th-text-primary font-bold text-sm rounded-full hover:bg-th-button/60 hover:scale-[1.03] transition-[transform,filter,background-color] duration-150"
+                className="flex items-center gap-2 px-6 py-2.5 bg-th-button/40 text-th-text-primary font-bold text-sm rounded-full hover:bg-th-button/60 hover:scale-[1.03] transition-[transform,filter,background-color] duration-150"
               >
                 <Shuffle size={18} />
                 Shuffle
@@ -606,6 +587,7 @@ export default function AlbumView({
             <CardScrollSection
               key={idx}
               section={section}
+              artistId={album?.artist?.id ?? album?.artists?.[0]?.id}
               onCardClick={handleCardClick}
               onContextMenu={handleCardContextMenu}
               onViewAll={

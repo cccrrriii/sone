@@ -26,12 +26,13 @@ import {
   contextSourceAtom,
   shuffleAtom,
   repeatAtom,
-  allowExplicitAtom,
   bitPerfectAtom,
   volumeNormalizationAtom,
   bitPerfectPreviousStateAtom,
   consecutiveFailCountAtom,
   userPausedAtom,
+  queueEpochAtom,
+  isVolumeLocked,
 } from "../atoms/playback";
 import {
   currentVideoAtom,
@@ -39,6 +40,7 @@ import {
   videoPlayingAtom,
   videoExpandedAtom,
 } from "../atoms/video";
+import { tvVolumeLockedPingAtom } from "../atoms/tv";
 import { getMixItems, checkNetworkError } from "../api/tidal";
 import { useToast } from "../contexts/ToastContext";
 import { stampQid, stampQids, ensureQid } from "../lib/qid";
@@ -53,7 +55,13 @@ import {
   isUnplayableError,
   retryAfterSecs,
 } from "../lib/trackAvailability";
-import { getProxyBlockedReason } from "../lib/errorUtils";
+import { getProxyBlockedReason, isNetworkError } from "../lib/errorUtils";
+import {
+  blockedMessage,
+  contentBlockReason,
+  isContentBlocked,
+  readContentPrefs,
+} from "../lib/contentFilter";
 import { pickGaplessNext } from "../lib/gaplessPredict";
 import { startVideoSession } from "../lib/videoSession";
 import { videoElementRef } from "../lib/videoElement";
@@ -77,13 +85,15 @@ type PlayResult =
       ok: false;
       /** `blocked` is deliberately NOT `unplayable`: the track is fine, egress
        *  is refused, and every following track would fail identically. It must
-       *  never reach the skip drain. */
+       *  never reach the skip drain. `filtered`: refused by the explicit/AI
+       *  content setting; also never skip-drained. */
       reason:
         | "network"
         | "unplayable"
         | "transient"
         | "rate-limited"
-        | "blocked";
+        | "blocked"
+        | "filtered";
     };
 
 const MAX_CONSECUTIVE_PLAY_FAILS = 3;
@@ -147,16 +157,6 @@ function isDeviceBusy(error: unknown): boolean {
   return extractPlaybackError(error) === "device_busy";
 }
 
-/** Check if an error is a network error (SoneError::Network). */
-function isNetworkError(error: unknown): boolean {
-  try {
-    const parsed = typeof error === "string" ? JSON.parse(error) : error;
-    return parsed?.kind === "Network";
-  } catch {
-    return false;
-  }
-}
-
 function fisherYatesShuffle<T>(arr: T[]): T[] {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -170,6 +170,19 @@ const DEVICE_RETRY_DELAY = 500;
 const DEVICE_MAX_RETRIES = 10;
 const MAX_HISTORY_TRACKS = 500;
 const PLAY_REENTRY_GUARD_MS = 250;
+// Play/Shuffle on an artist keeps the manual queue; on any other collection it clears it.
+const MANUAL_QUEUE_KEEPING_SOURCES = new Set(["artist", "artist-tracks"]);
+
+// Module-level because the hook has many instances but the backend cooldown is
+// global: a play from any of them must cancel a resume armed by another.
+let pendingResumeTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function cancelPendingResume() {
+  if (pendingResumeTimer !== null) {
+    clearTimeout(pendingResumeTimer);
+    pendingResumeTimer = null;
+  }
+}
 
 /** Invoke play_tidal_track with automatic device-busy retry.
  *  When PipeWire holds the ALSA device after pipeline teardown, this retries
@@ -206,22 +219,61 @@ export function usePlaybackActions() {
   const playNextLockRef = useRef(false);
   const lastPlayInvokeRef = useRef(0);
   const playNextRef = useRef<
-    ((opts?: { explicit?: boolean }) => Promise<void>) | null
+    | ((opts?: { explicit?: boolean; contextFirst?: boolean }) => Promise<void>)
+    | null
+  >(null);
+  const playTrackRef = useRef<
+    | ((
+        track: Track,
+        opts?: {
+          chosenByUser?: boolean;
+          retryOnRateLimit?: boolean;
+          contextFirst?: boolean;
+        },
+      ) => Promise<PlayResult>)
+    | null
   >(null);
 
-  // Toast the cooldown and schedule one automatic retry once it lapses.
-  // Used only on automatic advances — user-initiated paths toast and stop.
+  // Toast the cooldown and schedule one automatic retry once it lapses: of
+  // `retryTrack` when given, otherwise a playNext().
   const scheduleRateLimitResume = useCallback(
-    (error: unknown) => {
+    (
+      error: unknown,
+      retryTrack?: Track,
+      retryOpts?: { contextFirst?: boolean },
+    ) => {
       // The backend cooldown is a deadline, not a duration; add a second so the
       // retry lands after it rather than exactly on it.
       const wait = (retryAfterSecs(error) ?? 5) + 1;
       showToast(`Too many requests — resuming in ${wait}s`, "info");
       const gen = playGenerationRef.current;
-      setTimeout(() => {
+      cancelPendingResume();
+      pendingResumeTimer = setTimeout(() => {
+        pendingResumeTimer = null;
         if (gen !== playGenerationRef.current) return;
         if (store.get(userPausedAtom)) return;
-        void playNextRef.current?.();
+        if (store.get(currentVideoAtom)) return;
+        if (!retryTrack) {
+          void playNextRef.current?.();
+          return;
+        }
+        if (playNextLockRef.current) return;
+        playNextLockRef.current = true;
+        void (async () => {
+          let unplayable = false;
+          try {
+            const result = await playTrackRef.current?.(retryTrack, {
+              chosenByUser: true,
+              retryOnRateLimit: true,
+              contextFirst: retryOpts?.contextFirst,
+            });
+            unplayable = result?.ok === false && result.reason === "unplayable";
+          } finally {
+            playNextLockRef.current = false;
+          }
+          if (unplayable && retryOpts?.contextFirst)
+            await playNextRef.current?.({ explicit: true, contextFirst: true });
+        })();
       }, wait * 1000);
     },
     [store, showToast],
@@ -248,8 +300,19 @@ export function usePlaybackActions() {
         /** When true, the catch block does NOT toast for unplayable errors —
          *  the caller (the skip-loop in playNext) handles user feedback itself. */
         suppressUnplayableToast?: boolean;
+        /** On a 429, stop the old track and retry this one once the cooldown
+         *  lapses, instead of resuming with playNext(). */
+        retryOnRateLimit?: boolean;
+        /** With retryOnRateLimit: a retried track that turns out dead advances
+         *  within its own collection, as the clicked-into-a-collection callers do. */
+        contextFirst?: boolean;
       },
     ): Promise<PlayResult> => {
+      const blocked = contentBlockReason(track, readContentPrefs(store));
+      if (blocked) {
+        showToast(blockedMessage(blocked), "info");
+        return { ok: false, reason: "filtered" };
+      }
       // Swallow rapid re-entry (e.g. user double-clicks a track row).
       // Two play_tidal_track calls in quick succession cause overlapping
       // pipeline init and audible glitches.
@@ -258,9 +321,12 @@ export function usePlaybackActions() {
         return { ok: false, reason: "transient" };
       }
       lastPlayInvokeRef.current = now;
+      cancelPendingResume();
       // VIDEO queue item → render in the <video> player; keep it in the queue so
       // prev/next/history work uniformly. Do NOT touch the audio pipeline beyond stop.
       if (track.itemType === "video") {
+        // Cancels a pending rate-limit retry.
+        ++playGenerationRef.current;
         store.set(userPausedAtom, false);
         const v = ensureQid(normalizeTrack(track));
         const previousTrack = store.get(currentTrackAtom);
@@ -382,9 +448,18 @@ export function usePlaybackActions() {
         if (isRateLimitedError(error)) {
           // Without this, a 429 from ANY endpoint (search, home, library) stops
           // the music permanently: nothing retries once the cooldown lapses.
-          // Callers must leave the track at the queue head — the resume is a
-          // playNext(), so anything not in the queue would be skipped.
-          scheduleRateLimitResume(error);
+          // Callers either pass retryOnRateLimit or leave the track where
+          // playNext() reads first, so the resume doesn't skip it.
+          if (opts?.retryOnRateLimit) {
+            // The 429 hit before the pipeline was touched, so the old track is
+            // still playing; stopping it emits no track-finished.
+            void invoke("stop_track").catch(() => {});
+            scheduleRateLimitResume(error, track, {
+              contextFirst: opts.contextFirst,
+            });
+          } else {
+            scheduleRateLimitResume(error);
+          }
           return { ok: false, reason: "rate-limited" };
         }
         if (isUnplayableError(error)) {
@@ -403,6 +478,8 @@ export function usePlaybackActions() {
     },
     [store, showToast, scheduleRateLimitResume],
   );
+
+  playTrackRef.current = playTrack;
 
   const pauseTrack = useCallback(async () => {
     // Video is current → pause the shared <video>, never the audio pipeline.
@@ -520,11 +597,13 @@ export function usePlaybackActions() {
    *  playback source (so gapless never changes the "Playing from" context wrongly).
    *  Read-only: never mutates any atom. */
   const predictNextTrack = useCallback((): Track | null => {
+    const prefs = readContentPrefs(store);
     return pickGaplessNext({
       repeat: store.get(repeatAtom),
       manualHead: store.get(manualQueueAtom)[0] ?? null,
       contextHead: store.get(queueAtom)[0] ?? null,
       currentSourceId: store.get(playbackSourceAtom)?.id,
+      isBlocked: (t) => isContentBlocked(t, prefs),
     });
   }, [store]);
 
@@ -576,15 +655,14 @@ export function usePlaybackActions() {
 
   const setVolume = useCallback(
     async (level: number) => {
-      const bitPerfect = store.get(bitPerfectAtom);
-      const isVideo = !!store.get(currentVideoAtom);
-      // Bit-perfect audio stays locked at unity; video audio is lossy, so the
-      // slider must still work for it.
-      if (bitPerfect && !isVideo) return;
+      if (isVolumeLocked(store)) {
+        store.set(tvVolumeLockedPingAtom, (n) => n + 1);
+        return;
+      }
       store.set(volumeAtom, level); // the <video> element reads this atom
       // Never push a non-unity level to the GStreamer pipeline while bit-perfect
       // is on — that would attenuate (and un-bit-perfect) audio playback.
-      if (bitPerfect) return;
+      if (store.get(bitPerfectAtom)) return;
       try {
         await invoke("set_volume", { level });
       } catch (error) {
@@ -689,7 +767,7 @@ export function usePlaybackActions() {
 
   const addToQueue = useCallback(
     (track: Track, source?: ManualTrackSource) => {
-      if (!store.get(allowExplicitAtom) && track.explicit) return;
+      if (isContentBlocked(track, readContentPrefs(store))) return;
       const stamped = stampQid(normalizeTrack(track));
       if (source) (stamped as QueuedTrack)._source = source;
       store.set(manualQueueAtom, [...store.get(manualQueueAtom), stamped]);
@@ -699,13 +777,17 @@ export function usePlaybackActions() {
 
   const playNextInQueue = useCallback(
     (track: Track, source?: ManualTrackSource) => {
-      if (!store.get(allowExplicitAtom) && track.explicit) return;
+      if (isContentBlocked(track, readContentPrefs(store))) return;
       const stamped = stampQid(normalizeTrack(track));
       if (source) (stamped as QueuedTrack)._source = source;
       store.set(manualQueueAtom, [stamped, ...store.get(manualQueueAtom)]);
     },
     [store],
   );
+
+  const bumpQueueEpoch = useCallback(() => {
+    store.set(queueEpochAtom, store.get(queueEpochAtom) + 1);
+  }, [store]);
 
   const setQueueTracks = useCallback(
     (
@@ -714,6 +796,7 @@ export function usePlaybackActions() {
         albumMode?: boolean;
         reorder?: boolean;
         manualCount?: number;
+        clearManual?: boolean;
         source?: {
           type: string;
           id: string | number;
@@ -733,13 +816,12 @@ export function usePlaybackActions() {
         store.set(queueAtom, stamped.slice(mc));
         return;
       }
-      const filterExplicit = !store.get(allowExplicitAtom);
-      const eligible = filterExplicit
-        ? tracks.filter((t) => !t.explicit)
-        : tracks;
+      bumpQueueEpoch();
+      const prefs = readContentPrefs(store);
+      const eligible = tracks.filter((t) => !isContentBlocked(t, prefs));
       store.set(useTrackGainAtom, !options?.albumMode);
       store.set(originalQueueAtom, null);
-      store.set(manualQueueAtom, []);
+      if (options?.clearManual) store.set(manualQueueAtom, []);
       store.set(contextSourceAtom, null);
       store.set(
         playbackSourceAtom,
@@ -757,42 +839,71 @@ export function usePlaybackActions() {
       );
       store.set(queueAtom, stampQids(eligible.map(normalizeTrack)));
     },
-    [store],
+    [store, bumpQueueEpoch],
+  );
+
+  const playSingle = useCallback(
+    async (track: Track): Promise<PlayResult> => {
+      const blocked = contentBlockReason(track, readContentPrefs(store));
+      if (blocked) {
+        showToast(blockedMessage(blocked), "info");
+        return { ok: false, reason: "filtered" };
+      }
+      setQueueTracks([]);
+      return playTrack(track, { retryOnRateLimit: true });
+    },
+    [store, showToast, setQueueTracks, playTrack],
   );
 
   const appendToQueue = useCallback(
-    (newTracks: Track[]) => {
-      const filterExplicit = !store.get(allowExplicitAtom);
-      const eligible = filterExplicit
-        ? newTracks.filter((t) => !t.explicit)
-        : newTracks;
+    (
+      newTracks: Track[],
+      options?: {
+        shuffle?: boolean;
+        source?: { type: string; id: string | number };
+      },
+    ) => {
+      const prefs = readContentPrefs(store);
+      const eligible = newTracks.filter((t) => !isContentBlocked(t, prefs));
       if (eligible.length === 0) return;
       const stamped = stampQids(eligible.map(normalizeTrack));
 
-      // Append to playbackSourceAtom.tracks
-      const source = store.get(playbackSourceAtom);
-      if (source) {
+      const owner = options?.source;
+      const matches = (s: PlaybackSource | null) =>
+        !!s && (!owner || (s.type === owner.type && s.id === owner.id));
+      const ctx = owner ? store.get(contextSourceAtom) : null;
+      const playing = store.get(playbackSourceAtom);
+      if (matches(ctx)) {
+        store.set(contextSourceAtom, {
+          ...ctx!,
+          tracks: [...ctx!.tracks, ...stamped],
+        });
+      } else if (matches(playing)) {
         store.set(playbackSourceAtom, {
-          ...source,
-          tracks: [...source.tracks, ...stamped],
+          ...playing!,
+          tracks: [...playing!.tracks, ...stamped],
         });
       }
 
-      if (store.get(shuffleAtom)) {
-        // Append to originalQueueAtom in order
-        const orig = store.get(originalQueueAtom);
-        if (orig) {
-          store.set(originalQueueAtom, [...orig, ...stamped]);
+      const shuffleMode = store.get(shuffleAtom);
+      if (shuffleMode || options?.shuffle) {
+        if (shuffleMode) {
+          const orig = store.get(originalQueueAtom);
+          if (orig) {
+            store.set(originalQueueAtom, [...orig, ...stamped]);
+          }
         }
-        // Insert into queueAtom at random positions
         const queue = [...store.get(queueAtom)];
         for (const track of stamped) {
-          const idx = Math.floor(Math.random() * (queue.length + 1));
+          // Never in front of the head, so "up next" stays put.
+          const idx =
+            queue.length === 0
+              ? 0
+              : 1 + Math.floor(Math.random() * queue.length);
           queue.splice(idx, 0, track);
         }
         store.set(queueAtom, queue);
       } else {
-        // Append to end of queueAtom
         store.set(queueAtom, [...store.get(queueAtom), ...stamped]);
       }
     },
@@ -833,7 +944,7 @@ export function usePlaybackActions() {
   );
 
   const playNext = useCallback(
-    async (options?: { explicit?: boolean }) => {
+    async (options?: { explicit?: boolean; contextFirst?: boolean }) => {
       if (playNextLockRef.current) return;
       playNextLockRef.current = true;
       store.set(userPausedAtom, false);
@@ -942,10 +1053,27 @@ export function usePlaybackActions() {
           return false;
         };
 
+        // A dead clicked track advances within its own collection; the manual
+        // queue drains first only when that collection has nothing playable.
+        const contextPrefs = readContentPrefs(store);
+        const skipManual =
+          !!options?.contextFirst &&
+          store
+            .get(queueAtom)
+            .some(
+              (t) =>
+                !isTrackUnavailable(t) && !isContentBlocked(t, contextPrefs),
+            );
+
         // Drain manual queue first (skip past unavailable tracks)
-        while (store.get(manualQueueAtom).length > 0) {
+        while (!skipManual && store.get(manualQueueAtom).length > 0) {
           const manualNow = store.get(manualQueueAtom);
           const [nextTrack, ...rest] = manualNow;
+
+          if (isContentBlocked(nextTrack, readContentPrefs(store))) {
+            store.set(manualQueueAtom, rest);
+            continue;
+          }
 
           // Pre-check: skip via metadata flags, no backend round-trip.
           if (isTrackUnavailable(nextTrack)) {
@@ -1020,6 +1148,19 @@ export function usePlaybackActions() {
           const [nextTrack, ...rest] = queueNow;
           const isAutoplay = autoplayIdsRef.current.has(nextTrack.id);
 
+          if (isContentBlocked(nextTrack, readContentPrefs(store))) {
+            autoplayIdsRef.current.delete(nextTrack.id);
+            store.set(queueAtom, rest);
+            const origPre = store.get(originalQueueAtom);
+            if (origPre) {
+              store.set(
+                originalQueueAtom,
+                origPre.filter((t) => t._qid !== nextTrack._qid),
+              );
+            }
+            continue;
+          }
+
           // Pre-check: also filter originalQueueAtom so the skipped track
           // doesn't reappear when shuffle is toggled off.
           if (isTrackUnavailable(nextTrack)) {
@@ -1068,12 +1209,17 @@ export function usePlaybackActions() {
           return;
         }
 
+        if (skipManual && store.get(manualQueueAtom).length > 0) {
+          playNextLockRef.current = false;
+          await playNext({ explicit: true });
+          return;
+        }
+
         if (repeatMode === 1) {
           // Repeat-all: rebuild from source (Bug 2) or history+current fallback
           const repeatSource =
             store.get(contextSourceAtom) ?? store.get(playbackSourceAtom);
           const sourceTracks = repeatSource?.tracks;
-          const explicitOk = store.get(allowExplicitAtom);
           const hasSource = !!(sourceTracks && sourceTracks.length > 0);
           const raw = hasSource
             ? sourceTracks
@@ -1084,9 +1230,10 @@ export function usePlaybackActions() {
                   : []),
               ];
           // Pre-filter unavailable so the rebuilt queue doesn't immediately hit them.
+          const prefs = readContentPrefs(store);
           const all = stampQids(
-            (explicitOk ? raw : raw.filter((t) => !t.explicit)).filter(
-              (t) => !isTrackUnavailable(t),
+            raw.filter(
+              (t) => !isContentBlocked(t, prefs) && !isTrackUnavailable(t),
             ),
           );
 
@@ -1136,16 +1283,17 @@ export function usePlaybackActions() {
               const trackMixId = current.mixes?.TRACK_MIX;
               if (!trackMixId) return;
               const { tracks: radio } = await getMixItems(trackMixId);
-              const explicitOk = store.get(allowExplicitAtom);
+              const prefs = readContentPrefs(store);
               const fresh = radio.filter(
                 (t) =>
                   !historyIds.has(t.id) &&
-                  (explicitOk || !t.explicit) &&
+                  !isContentBlocked(t, prefs) &&
                   !isTrackUnavailable(t),
               );
               if (fresh.length > 0) {
                 const [next, ...rest] = fresh;
                 autoplayIdsRef.current = new Set(rest.map((t) => t.id));
+                bumpQueueEpoch();
                 store.set(queueAtom, stampQids(rest.map(normalizeTrack)));
                 store.set(useTrackGainAtom, true); // radio = mixed context
                 const result = await playTrack(next, { chosenByUser: false });
@@ -1179,7 +1327,7 @@ export function usePlaybackActions() {
         playNextLockRef.current = false;
       }
     },
-    [store, playTrack, scheduleRateLimitResume, requeueHead],
+    [store, playTrack, scheduleRateLimitResume, requeueHead, bumpQueueEpoch],
   );
 
   playNextRef.current = playNext;
@@ -1333,8 +1481,17 @@ export function usePlaybackActions() {
         const current = store.get(currentTrackAtom);
         if (source && current) {
           const idx = source.tracks.findIndex((t) => t.id === current.id);
-          if (idx > 0) {
-            const prevTrack = stampQid(source.tracks[idx - 1]);
+          const prefs = readContentPrefs(store);
+          let p = idx - 1;
+          while (
+            p >= 0 &&
+            (isContentBlocked(source.tracks[p], prefs) ||
+              isTrackUnavailable(source.tracks[p]))
+          ) {
+            p--;
+          }
+          if (idx > 0 && p >= 0) {
+            const prevTrack = stampQid(source.tracks[p]);
 
             // Save state for rollback
             const savedQueue = store.get(queueAtom);
@@ -1500,14 +1657,14 @@ export function usePlaybackActions() {
           allTracks: Track[];
         };
         albumMode?: boolean;
+        clearManual?: boolean;
       },
     ) => {
-      const filterExplicit = !store.get(allowExplicitAtom);
-      const eligible = filterExplicit
-        ? tracks.filter((t) => !t.explicit)
-        : tracks;
+      bumpQueueEpoch();
+      const prefs = readContentPrefs(store);
+      const eligible = tracks.filter((t) => !isContentBlocked(t, prefs));
       const stamped = stampQids(eligible.map(normalizeTrack));
-      store.set(manualQueueAtom, []);
+      if (options?.clearManual) store.set(manualQueueAtom, []);
       store.set(contextSourceAtom, null);
       const shuffleOn = store.get(shuffleAtom);
       store.set(originalQueueAtom, shuffleOn ? stamped : null);
@@ -1528,7 +1685,7 @@ export function usePlaybackActions() {
           : null,
       );
     },
-    [store],
+    [store, bumpQueueEpoch],
   );
 
   const playFromQueue = useCallback(
@@ -1545,6 +1702,11 @@ export function usePlaybackActions() {
       }
       if (isTrackUnavailable(track)) {
         showToast("Track unavailable", "info");
+        return;
+      }
+      const blocked = contentBlockReason(track, readContentPrefs(store));
+      if (blocked) {
+        showToast(blockedMessage(blocked), "info");
         return;
       }
       // Explicit user action — clear the skip-loop counter.
@@ -1568,7 +1730,7 @@ export function usePlaybackActions() {
           );
         }
       }
-      await playTrack(track);
+      await playTrack(track, { retryOnRateLimit: true });
     },
     [store, playTrack, showToast],
   );
@@ -1590,10 +1752,13 @@ export function usePlaybackActions() {
         albumMode?: boolean;
       },
     ) => {
-      const filterExplicit = !store.get(allowExplicitAtom);
-      const eligible = filterExplicit
-        ? allTracks.filter((t) => !t.explicit)
-        : allTracks;
+      const prefs = readContentPrefs(store);
+      const blocked = contentBlockReason(track, prefs);
+      if (blocked) {
+        showToast(blockedMessage(blocked), "info");
+        return;
+      }
+      const eligible = allTracks.filter((t) => !isContentBlocked(t, prefs));
       const idx = eligible.findIndex((t) => t.id === track.id);
       const rest =
         idx >= 0
@@ -1605,17 +1770,16 @@ export function usePlaybackActions() {
         setQueueTracks(rest, options);
       }
       store.set(consecutiveFailCountAtom, 0);
-      const result = await playTrack(track);
+      const result = await playTrack(track, {
+        retryOnRateLimit: true,
+        contextFirst: true,
+      });
       if (!result.ok && result.reason === "unplayable") {
         // First track was unavailable. Engage skip-loop on rest.
-        await playNext({ explicit: true });
-      } else if (!result.ok && result.reason === "rate-limited") {
-        // The queue holds only `rest`; the resume is a playNext(), so without
-        // this the retry would skip straight past the track the user picked.
-        requeueHead(track);
+        await playNext({ explicit: true, contextFirst: true });
       }
     },
-    [store, playTrack, setQueueTracks, setShuffledQueue, playNext, requeueHead],
+    [store, playTrack, setQueueTracks, setShuffledQueue, playNext, showToast],
   );
 
   const playAllFromSource = useCallback(
@@ -1632,42 +1796,53 @@ export function usePlaybackActions() {
           allTracks: Track[];
         };
         albumMode?: boolean;
+        shuffle?: boolean;
       },
-    ) => {
-      const filterExplicit = !store.get(allowExplicitAtom);
+    ): Promise<boolean> => {
+      const prefs = readContentPrefs(store);
       const eligible = allTracks.filter(
-        (t) => !isTrackUnavailable(t) && (!filterExplicit || !t.explicit),
+        (t) => !isTrackUnavailable(t) && !isContentBlocked(t, prefs),
       );
-      if (eligible.length === 0) return;
+      if (eligible.length === 0) return false;
       store.set(consecutiveFailCountAtom, 0);
+      const queueOptions = {
+        ...options,
+        clearManual: !MANUAL_QUEUE_KEEPING_SOURCES.has(
+          options?.source?.type ?? "",
+        ),
+      };
       let first: Track;
-      if (store.get(shuffleAtom)) {
+      if (options?.shuffle || store.get(shuffleAtom)) {
         const firstIdx = Math.floor(Math.random() * eligible.length);
         first = eligible[firstIdx];
         const rest = eligible.filter((_, i) => i !== firstIdx);
-        setShuffledQueue(rest, options);
+        setShuffledQueue(rest, queueOptions);
       } else {
         const [head, ...rest] = eligible;
         first = head;
-        setQueueTracks(rest, options);
+        setQueueTracks(rest, queueOptions);
       }
-      const result = await playTrack(first);
+      const result = await playTrack(first, {
+        retryOnRateLimit: true,
+        contextFirst: true,
+      });
       if (!result.ok && result.reason === "unplayable") {
-        await playNext({ explicit: true });
-      } else if (!result.ok && result.reason === "rate-limited") {
-        requeueHead(first);
+        await playNext({ explicit: true, contextFirst: true });
       }
+      return true;
     },
-    [store, playTrack, setQueueTracks, setShuffledQueue, playNext, requeueHead],
+    [store, playTrack, setQueueTracks, setShuffledQueue, playNext],
   );
 
   const clearQueue = useCallback(() => {
+    cancelPendingResume();
+    bumpQueueEpoch();
     store.set(queueAtom, []);
     store.set(manualQueueAtom, []);
     store.set(originalQueueAtom, null);
     store.set(playbackSourceAtom, null);
     store.set(contextSourceAtom, null);
-  }, [store]);
+  }, [store, bumpQueueEpoch]);
 
   return {
     playTrack,
@@ -1681,6 +1856,7 @@ export function usePlaybackActions() {
     addToQueue,
     playNextInQueue,
     setQueueTracks,
+    playSingle,
     appendToQueue,
     removeFromQueue,
     playFromQueue,

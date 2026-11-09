@@ -1,6 +1,4 @@
 import {
-  Play,
-  Pause,
   User,
   X,
   Shuffle,
@@ -17,9 +15,7 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { useStore } from "jotai";
-import { isPlayingAtom, currentTrackAtom } from "../atoms/playback";
-import { usePlaybackActions } from "../hooks/usePlaybackActions";
+import { usePlaySource } from "../hooks/usePlaySource";
 import { useMediaPlay } from "../hooks/useMediaPlay";
 import { useFavorites } from "../hooks/useFavorites";
 import { useNavigation } from "../hooks/useNavigation";
@@ -37,7 +33,10 @@ import {
 import MediaContextMenu from "./MediaContextMenu";
 import TrackContextMenu from "./TrackContextMenu";
 import { fetchCachedImageUrl } from "./TidalImage";
+import ArtistHeroCanvas from "./ArtistHeroCanvas";
 import TrackList from "./TrackList";
+import SourcePlayButton from "./SourcePlayButton";
+import { artistTopTracksPager, type PlayableSource } from "../lib/trackSources";
 import { ArtistPageSkeleton } from "./PageSkeleton";
 import {
   getItemImage,
@@ -49,10 +48,6 @@ import {
 import BioText, { stripBio } from "./BioText";
 import CardScrollSection from "./CardScrollSection";
 import PageContainer from "./PageContainer";
-
-// Fades the stitched banner into the page background at its bottom edge.
-const HERO_FADE =
-  "linear-gradient(to bottom, #000 0%, #000 60%, transparent 100%)";
 
 function HeaderAction({
   icon,
@@ -92,15 +87,7 @@ export default function ArtistPage({
   artistInfo,
   onBack,
 }: ArtistPageProps) {
-  const store = useStore();
-  const {
-    playTrack,
-    pauseTrack,
-    resumeTrack,
-    setShuffledQueue,
-    playFromSource,
-    playAllFromSource,
-  } = usePlaybackActions();
+  const playSource = usePlaySource();
   const playMedia = useMediaPlay();
   const {
     followedArtistIds,
@@ -205,13 +192,13 @@ export default function ArtistPage({
   // Guaranteed final fallback: the first top track's album cover (always present).
   const firstTrackCover = topTracks[0]?.album?.cover;
 
-  // Image sources in priority order: dedicated artist artwork → legacy picture →
+  // Image sources in priority order: picture → dedicated artist artwork →
   // album-cover fallbacks. Each loads progressively (small first, hi-res swaps in).
   // Mirrors getArtistImage in src/utils/itemHelpers.ts — keep both in sync.
   const heroSources = useMemo(() => {
     const list: { uuid: string; kind: "artist" | "album" }[] = [];
-    if (artworkId) list.push({ uuid: artworkId, kind: "artist" });
     if (picture) list.push({ uuid: picture, kind: "artist" });
+    if (artworkId) list.push({ uuid: artworkId, kind: "artist" });
     if (albumFallback) list.push({ uuid: albumFallback, kind: "album" });
     if (firstTrackCover) list.push({ uuid: firstTrackCover, kind: "album" });
     return list;
@@ -225,7 +212,6 @@ export default function ArtistPage({
     s.kind === "artist"
       ? getTidalArtistImageUrl(s.uuid, hi ? 750 : 160)
       : getTidalImageUrl(s.uuid, hi ? 1280 : 320);
-  const heroDisplay = showHi || showLow;
   // Small avatars reuse the hero's resolved source — same URL, already cached,
   // and already advanced past any source that failed to fetch.
   const avatarSrc = heroSources[heroSrcIdx]
@@ -277,76 +263,32 @@ export default function ArtistPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showLow]);
 
-  const trackIds = useMemo(
-    () => new Set(topTracks.map((t: any) => t.id).filter(Boolean)),
-    [topTracks],
-  );
+  const artistMeta = { type: "artist", id: artistId, name: displayName };
 
-  const handlePlayTrack = async (
-    track: any,
-    _index: number,
-    trackList: any[],
-  ) => {
-    try {
-      await playFromSource(track, trackList, {
-        source: {
-          type: "artist",
-          id: artistId,
-          name: displayName,
-          allTracks: trackList,
-        },
-      });
-    } catch (err) {
-      console.error("Failed to play artist track:", err);
-    }
+  // The preview isn't guaranteed to be a prefix of the full list, so page
+  // from 0 and let de-duplication drop the overlap.
+  const artistPlayable = (): PlayableSource => ({
+    meta: artistMeta,
+    loaded: topTracks,
+    nextOffset: 0,
+    fetchPage: artistTopTracksPager(artistId),
+    dedupe: true,
+  });
+
+  const handlePlayTrack = (track: any, _index: number, trackList: any[]) => {
+    // Only the first TRACK_LIST is the top tracks; other track sections play
+    // their own list.
+    const src: PlayableSource =
+      trackList === topTracks
+        ? artistPlayable()
+        : { meta: artistMeta, loaded: trackList };
+    void playSource(src, { startAt: track });
   };
-
-  const handlePlayAll = async () => {
-    if (topTracks.length === 0) return;
-
-    const currentTrack = store.get(currentTrackAtom);
-    const isPlaying = store.get(isPlayingAtom);
-    if (currentTrack && trackIds.has(currentTrack.id)) {
-      if (isPlaying) {
-        await pauseTrack();
-      } else {
-        await resumeTrack();
-      }
-      return;
-    }
-
-    try {
-      await playAllFromSource(topTracks, {
-        source: {
-          type: "artist",
-          id: artistId,
-          name: displayName,
-          allTracks: topTracks,
-        },
-      });
-    } catch (err) {
-      console.error("Failed to play artist tracks:", err);
-    }
+  const handlePlayAll = () => {
+    void playSource(artistPlayable());
   };
-
-  const handleShuffle = async () => {
-    if (topTracks.length === 0) return;
-    const firstIdx = Math.floor(Math.random() * topTracks.length);
-    const first = topTracks[firstIdx];
-    const rest = topTracks.filter((_, i) => i !== firstIdx);
-    try {
-      setShuffledQueue(rest, {
-        source: {
-          type: "artist",
-          id: artistId,
-          name: displayName,
-          allTracks: topTracks,
-        },
-      });
-      await playTrack(first);
-    } catch (err) {
-      console.error("Failed to shuffle artist tracks:", err);
-    }
+  const handleShuffle = () => {
+    void playSource(artistPlayable(), { shuffle: true });
   };
 
   const handleToggleFollow = async () => {
@@ -371,7 +313,7 @@ export default function ArtistPage({
     if (!radioMixId) return;
     navigateToMix(radioMixId, {
       title: `${displayName} Radio`,
-      image: picture ? getTidalArtistImageUrl(picture, 480) : undefined,
+      image: picture ? getTidalArtistImageUrl(picture, 320) : undefined,
       mixType: "ARTIST_MIX",
     });
   };
@@ -499,11 +441,6 @@ export default function ArtistPage({
     ],
   );
 
-  const artistPlaying = (() => {
-    const ct = store.get(currentTrackAtom);
-    return !!(ct && trackIds.has(ct.id) && store.get(isPlayingAtom));
-  })();
-
   if (loading) {
     return <ArtistPageSkeleton />;
   }
@@ -514,7 +451,7 @@ export default function ArtistPage({
 
   if (error) {
     return (
-      <div className="flex-1 bg-linear-to-b from-th-surface to-th-base flex items-center justify-center">
+      <div className="flex-1 page-gradient flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center px-8">
           <User size={48} className="text-th-text-disabled" />
           <p className="text-th-text-primary font-semibold text-lg">
@@ -533,7 +470,7 @@ export default function ArtistPage({
   }
 
   return (
-    <div className="flex-1 bg-linear-to-b from-th-surface to-th-base overflow-y-auto scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent">
+    <div className="flex-1 page-gradient overflow-y-auto scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent">
       {/* Artist Hero — full-bleed banner */}
       <div className="relative w-full h-[480px] overflow-hidden flex items-end mb-8">
         {/* Low-res blob: confirm it decodes (else step source). Rendered opacity-0
@@ -558,31 +495,12 @@ export default function ArtistPage({
             src={hiBlob}
             className="pointer-events-none absolute inset-0 opacity-0"
             onLoad={() => setShowHi(hiBlob)}
+            onError={() =>
+              setHeroSrcIdx((i) => (i + 1 < heroSources.length ? i + 1 : i))
+            }
           />
         )}
-        {heroDisplay && (
-          <div
-            className={`absolute inset-0 flex justify-center overflow-hidden ${!hiBlob ? "blur-2xl" : ""}`}
-            style={{ maskImage: HERO_FADE, WebkitMaskImage: HERO_FADE }}
-          >
-            {/* Square copies stitched edge-to-edge; the centre one stays bright,
-                the flanking copies are darkened. */}
-            {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-              <img
-                key={i}
-                src={heroDisplay}
-                alt=""
-                draggable={false}
-                className={`h-full w-auto shrink-0 select-none object-cover ${
-                  i === 3 ? "" : "brightness-[0.32]"
-                }`}
-              />
-            ))}
-          </div>
-        )}
-        {/* Legibility scrims — tinted to the theme base so they track any theme */}
-        <div className="absolute inset-0 bg-gradient-to-t from-th-base/85 via-th-base/25 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-th-base/50 to-transparent" />
+        <ArtistHeroCanvas low={showLow} hi={showHi} />
 
         {/* Foreground content */}
         <PageContainer className="relative z-10 w-full">
@@ -614,28 +532,14 @@ export default function ArtistPage({
             {/* Controls */}
             <div className="mt-6 flex items-end justify-between gap-6">
               <div className="flex items-center gap-3">
-                <button
-                  onClick={handlePlayAll}
-                  className="flex items-center gap-2 px-6 py-2.5 bg-th-accent text-th-on-accent font-bold text-sm rounded-full shadow-lg hover:brightness-110 hover:scale-[1.03] transition-[transform,filter] duration-150"
-                >
-                  {artistPlaying ? (
-                    <Pause
-                      size={18}
-                      fill="currentColor"
-                      className="text-th-on-accent"
-                    />
-                  ) : (
-                    <Play
-                      size={18}
-                      fill="currentColor"
-                      className="text-th-on-accent"
-                    />
-                  )}
-                  {artistPlaying ? "Pause" : "Play"}
-                </button>
+                <SourcePlayButton
+                  sourceType="artist"
+                  sourceId={artistId}
+                  onPlay={handlePlayAll}
+                />
                 <button
                   onClick={handleShuffle}
-                  className="flex items-center gap-2 px-6 py-2.5 bg-th-button/40 backdrop-blur-md text-th-text-primary font-bold text-sm rounded-full hover:bg-th-button/60 hover:scale-[1.03] transition-[transform,filter,background-color] duration-150"
+                  className="flex items-center gap-2 px-6 py-2.5 bg-th-button/40 text-th-text-primary font-bold text-sm rounded-full hover:bg-th-button/60 hover:scale-[1.03] transition-[transform,filter,background-color] duration-150"
                 >
                   <Shuffle size={18} />
                   Shuffle
@@ -757,6 +661,7 @@ export default function ArtistPage({
               <CardScrollSection
                 key={sectionIdx}
                 section={section}
+                artistId={artistId}
                 onCardClick={handleCardClick}
                 onContextMenu={handleCardContextMenu}
                 onViewAll={

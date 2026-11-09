@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Heart } from "lucide-react";
-import { usePlaybackActions } from "../hooks/usePlaybackActions";
+import { usePlaySource } from "../hooks/usePlaySource";
 import { useMediaPlay } from "../hooks/useMediaPlay";
 import { useNavigation } from "../hooks/useNavigation";
 import { useFavorites } from "../hooks/useFavorites";
@@ -27,6 +27,7 @@ import {
   isMixItem,
   isMyTracksItem,
   buildMediaItem,
+  getArtistAlbumSubtitle,
 } from "../utils/itemHelpers";
 
 const PAGE_SIZE = 50;
@@ -43,7 +44,7 @@ export default function ViewAllPage({
   apiPath,
   artistId,
 }: ViewAllPageProps) {
-  const { playFromSource } = usePlaybackActions();
+  const playSource = usePlaySource();
   const playMedia = useMediaPlay();
   const {
     navigateToAlbum,
@@ -176,15 +177,19 @@ export default function ViewAllPage({
       return;
     }
     if (isTrackItem(item)) {
-      const allTrackItems = items.filter((t) => isTrackItem(t));
-      playFromSource(item, allTrackItems, {
-        source: {
-          type: "view-all",
-          id: title,
-          name: title,
-          allTracks: allTrackItems,
+      void playSource(
+        {
+          meta: { type: "view-all", id: title, name: title },
+          loaded: items,
+          include: (t) => isTrackItem(t),
+          dedupe: !!artistId,
+          hasMore: !!artistId && hasMore,
+          fetchPage: artistId
+            ? (offset) => getArtistViewAll(artistId, apiPath, offset, PAGE_SIZE)
+            : undefined,
         },
-      });
+        { startAt: item },
+      );
     } else if (isArtistItem(item)) {
       navigateToArtist(item.id, {
         name: item.name || getItemTitle(item),
@@ -290,7 +295,7 @@ export default function ViewAllPage({
   };
 
   return (
-    <div className="flex-1 bg-gradient-to-b from-th-surface to-th-base min-h-full">
+    <div className="flex-1 page-gradient min-h-full">
       <PageContainer className="px-6 py-8">
         {/* Header */}
         <div className="flex items-center gap-4 mb-8">
@@ -329,8 +334,14 @@ export default function ViewAllPage({
                   }
                   isArtist={isArtistItem(item) || hasArtists}
                   showPlayButton={!myTracks && !hasArtists && !hasMixes}
+                  showExplicit={artistId != null}
                   isFavorited={favProps.isFavorited}
                   onFavoriteToggle={favProps.onFavoriteToggle}
+                  subtitleOverride={
+                    artistId != null && mediaItem?.type === "album"
+                      ? getArtistAlbumSubtitle(item, artistId)
+                      : undefined
+                  }
                   {...(myTracks && {
                     titleOverride: "Loved Tracks",
                     subtitleOverride: "Collection",

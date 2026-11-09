@@ -6,13 +6,14 @@ use serde::Deserialize;
 use tauri::{Emitter, Manager};
 
 use crate::AppState;
+use crate::commands::library::after_playlist_write;
 use crate::mcp::events::{
     EV_PLAYLIST_CREATED, EV_PLAYLIST_DELETED, EV_PLAYLIST_TRACKS_CHANGED, EV_PLAYLIST_UPDATED,
     PlaylistDeletedPayload, PlaylistTracksChangedPayload, PlaylistUpdatedPayload,
 };
 use crate::mcp::sanitizer::{SanitizedPlaylist, backfill_and_sanitize_tracks};
 use crate::mcp::server::SoneMcpServer;
-use crate::tidal_api::TidalClient;
+use crate::tidal_api::{OnDupes, TidalClient};
 
 use super::util::{require_user_id, NoArgs};
 
@@ -187,10 +188,10 @@ impl SoneMcpServer {
         let uuid = playlist.uuid.clone();
         let track_count = if let Some(ids) = args.track_ids.filter(|v| !v.is_empty()) {
             client
-                .add_tracks_to_playlist(&uuid, &ids)
+                .add_tracks_to_playlist(&uuid, &ids, OnDupes::Skip)
                 .await
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-            ids.len() as u32
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+                .len() as u32
         } else {
             0
         };
@@ -321,7 +322,7 @@ impl SoneMcpServer {
 
     #[rmcp::tool(
         name = "add_to_playlist",
-        description = "Add tracks to an existing playlist (by uuid or name)."
+        description = "Add tracks to an existing playlist (by uuid or name). Tracks already in the playlist are skipped."
     )]
     async fn add_to_playlist(
         &self,
@@ -340,15 +341,14 @@ impl SoneMcpServer {
             args.playlist_name.as_deref(),
         )
         .await?;
-        let added = args.track_ids.len();
-        client
-            .add_tracks_to_playlist(&uuid, &args.track_ids)
-            .await
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        state
-            .disk_cache
-            .invalidate_tag(&format!("playlist:{}", uuid))
+        let result = client
+            .add_tracks_to_playlist(&uuid, &args.track_ids, OnDupes::Skip)
             .await;
+        let added = after_playlist_write(&state.disk_cache, &uuid, result)
+            .await
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .len();
+        let skipped_duplicates = args.track_ids.len().saturating_sub(added);
         self.app_handle
             .emit(
                 EV_PLAYLIST_TRACKS_CHANGED,
@@ -358,7 +358,11 @@ impl SoneMcpServer {
                 },
             )
             .map_err(|e| ErrorData::internal_error(format!("emit failed: {e}"), None))?;
-        let json = serde_json::json!({ "uuid": uuid, "added": added });
+        let json = serde_json::json!({
+            "uuid": uuid,
+            "added": added,
+            "skipped_duplicates": skipped_duplicates,
+        });
         Ok(CallToolResult::success(vec![rmcp::model::ContentBlock::text(
             json.to_string(),
         )]))
@@ -374,14 +378,12 @@ impl SoneMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         let state = self.app_handle.state::<AppState>();
         let client = state.tidal_client.lock().await;
-        client
+        let result = client
             .remove_track_from_playlist(&args.playlist_uuid, args.index)
+            .await;
+        after_playlist_write(&state.disk_cache, &args.playlist_uuid, result)
             .await
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        state
-            .disk_cache
-            .invalidate_tag(&format!("playlist:{}", args.playlist_uuid))
-            .await;
         self.app_handle
             .emit(
                 EV_PLAYLIST_TRACKS_CHANGED,

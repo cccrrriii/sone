@@ -28,7 +28,7 @@ export default function TvPageScreen({
   useTvInitialFocus(data !== null || error !== null);
 
   if (error) return <TvError message={error} onRetry={retry} />;
-  if (!data) return <TvSpinner />;
+  if (!data) return <TvSpinner screen />;
 
   const sections = data.sections
     .map((section) => ({
@@ -68,6 +68,7 @@ export default function TvPageScreen({
             entries={entries}
             queueTracks={tracks}
             queueId={`page:${apiPath}:${section.title}`}
+            showExplicit
             viewAll={
               section.hasMore && section.apiPath
                 ? {

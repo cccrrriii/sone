@@ -13,6 +13,7 @@ import {
   getItemTitle,
   getItemId,
   buildMediaItem,
+  getArtistAlbumSubtitle,
 } from "./itemHelpers";
 
 describe("getTrackPrimaryArtist", () => {
@@ -147,15 +148,35 @@ describe("getMediaQualityBadge", () => {
 });
 
 describe("getArtistImage", () => {
-  it("prefers artworkId and uses artist CDN sizes", () => {
+  it("prefers picture over artworkId and uses artist CDN sizes", () => {
     expect(
-      getArtistImage({ artworkId: "aaaa-bbbb", picture: "cccc-dddd" }, 480),
-    ).toBe("https://resources.tidal.com/images/aaaa/bbbb/480x480.jpg");
+      getArtistImage({ artworkId: "aaaa-bbbb", picture: "cccc-dddd" }, 320),
+    ).toBe("https://resources.tidal.com/images/cccc/dddd/320x320.jpg");
   });
 
-  it("falls back to the legacy picture UUID", () => {
-    expect(getArtistImage({ picture: "cccc-dddd" }, 320)).toBe(
+  // Many artist pictures (lesser-known artists especially) have no 480 square.
+  it("never asks for the 480 square, which many artist pictures lack", () => {
+    expect(getArtistImage({ picture: "cccc-dddd" }, 480)).toBe(
       "https://resources.tidal.com/images/cccc/dddd/320x320.jpg",
+    );
+    expect(getArtistImage({ picture: "cccc-dddd" }, 400)).toBe(
+      "https://resources.tidal.com/images/cccc/dddd/320x320.jpg",
+    );
+    expect(getArtistImage({ picture: "cccc-dddd" }, 750)).toBe(
+      "https://resources.tidal.com/images/cccc/dddd/750x750.jpg",
+    );
+    // A large card asks getItemImage for 640; an artist card still gets 320.
+    expect(getItemImage({ picture: "cccc-dddd" }, 640)).toBe(
+      "https://resources.tidal.com/images/cccc/dddd/320x320.jpg",
+    );
+    expect(getArtistImage({ picture: "cccc-dddd" }, 160)).toBe(
+      "https://resources.tidal.com/images/cccc/dddd/160x160.jpg",
+    );
+  });
+
+  it("falls back to artworkId when there is no picture", () => {
+    expect(getArtistImage({ picture: null, artworkId: "aaaa-bbbb" }, 320)).toBe(
+      "https://resources.tidal.com/images/aaaa/bbbb/320x320.jpg",
     );
   });
 
@@ -395,5 +416,98 @@ describe("getTrackArtistDisplay", () => {
 
   it("honours an empty fallback so a caller can render nothing", () => {
     expect(getTrackArtistDisplay({}, "")).toBe("");
+  });
+});
+
+describe("magazine items", () => {
+  const raw = {
+    type: "MAGAZINE",
+    data: {
+      id: 1,
+      imageURL: "https://resources.tidal.com/images/aa/bb/550x400.jpg",
+      artifactId: "pl-uuid",
+      type: "PLAYLIST",
+      shortHeader: "Title",
+      shortSubHeader: "Sub",
+    },
+  };
+  // What a feed section actually delivers: `data` merged up by the backend.
+  const flat = { ...raw.data, _itemType: "MAGAZINE" };
+
+  it.each([
+    ["raw", raw],
+    ["flattened", flat],
+  ])("reads the %s shape", (_label, item) => {
+    expect(getItemImage(item)).toBe(raw.data.imageURL);
+    expect(getItemTitle(item)).toBe("Title");
+    expect(getItemId(item)).toBe("pl-uuid");
+    expect(buildMediaItem(item)).toEqual({
+      type: "playlist",
+      uuid: "pl-uuid",
+      title: "Title",
+      image: raw.data.imageURL,
+    });
+  });
+});
+
+describe("getArtistAlbumSubtitle", () => {
+  const own = (extra: object) => ({
+    id: 1,
+    artists: [{ id: 42, name: "HOOKUPS", main: true }],
+    ...extra,
+  });
+
+  it("shows year and release type for the page artist's own albums", () => {
+    expect(
+      getArtistAlbumSubtitle(
+        own({ releaseDate: "2026-06-28", type: "ALBUM" }),
+        42,
+      ),
+    ).toBe("2026 · Album");
+    expect(
+      getArtistAlbumSubtitle(
+        own({ releaseDate: "2024-04-29", type: "SINGLE" }),
+        42,
+      ),
+    ).toBe("2024 · Single");
+    expect(
+      getArtistAlbumSubtitle(
+        own({ releaseDate: "2026-05-22", type: "EP" }),
+        42,
+      ),
+    ).toBe("2026 · EP");
+  });
+
+  it("keeps the year of a January 1st release in every timezone", () => {
+    expect(
+      getArtistAlbumSubtitle(
+        own({ releaseDate: "1985-01-01", type: "ALBUM" }),
+        42,
+      ),
+    ).toBe("1985 · Album");
+  });
+
+  it("names the album artist when the page artist only appears on it", () => {
+    expect(
+      getArtistAlbumSubtitle(
+        {
+          id: 2,
+          releaseDate: "2026-09-11",
+          type: "ALBUM",
+          artists: [{ id: 2935, name: "Various Artists", main: true }],
+        },
+        42,
+      ),
+    ).toBe("Various Artists · 2026");
+  });
+
+  it("omits an unknown release type", () => {
+    expect(getArtistAlbumSubtitle(own({ releaseDate: "2020-03-01" }), 42)).toBe(
+      "2020",
+    );
+  });
+
+  it("returns undefined without a release date so the default subtitle is used", () => {
+    expect(getArtistAlbumSubtitle(own({ type: "ALBUM" }), 42)).toBeUndefined();
   });
 });

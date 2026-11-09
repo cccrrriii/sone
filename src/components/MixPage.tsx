@@ -8,10 +8,11 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import SourcePlayButton from "./SourcePlayButton";
-import { usePlaybackActions } from "../hooks/usePlaybackActions";
+import { usePlaySource } from "../hooks/usePlaySource";
 import { useFavorites } from "../hooks/useFavorites";
 import { getMixItems } from "../api/tidal";
 import { getApiStatus, safeErrorMessage } from "../lib/errorUtils";
+import type { PlayableSource } from "../lib/trackSources";
 import NotFoundPage from "./NotFoundPage";
 import {
   type Track,
@@ -42,8 +43,7 @@ interface MixPageProps {
 }
 
 export default function MixPage({ mixId, mixInfo, onBack }: MixPageProps) {
-  const { playTrack, setShuffledQueue, playFromSource, playAllFromSource } =
-    usePlaybackActions();
+  const playSource = usePlaySource();
   const { showToast } = useToast();
 
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -99,45 +99,25 @@ export default function MixPage({ mixId, mixInfo, onBack }: MixPageProps) {
 
   const isTrackRadio = mixType === "TRACK_MIX";
 
-  const mixSource = {
-    type: isTrackRadio ? ("radio" as const) : ("mix" as const),
+  const mixMeta = {
+    type: isTrackRadio ? "radio" : "mix",
     id: mixId,
     name:
       mixInfo?.title || fetchedTitle || (isTrackRadio ? "Track Radio" : "Mix"),
     image: mixInfo?.image || fetchedImage || undefined,
     subtitle: mixInfo?.subtitle || fetchedSubtitle || undefined,
     mixType: mixInfo?.mixType ?? mixType ?? undefined,
-    allTracks: tracks,
   };
+  const mixPlayable = (): PlayableSource => ({ meta: mixMeta, loaded: tracks });
 
-  const handlePlayTrack = async (track: Track, _index: number) => {
-    try {
-      await playFromSource(track, tracks, { source: mixSource });
-    } catch (err) {
-      console.error("Failed to play mix track:", err);
-    }
+  const handlePlayTrack = (track: Track, _index: number) => {
+    void playSource(mixPlayable(), { startAt: track });
   };
-
-  const handlePlayAll = async () => {
-    if (tracks.length === 0) return;
-    try {
-      await playAllFromSource(tracks, { source: mixSource });
-    } catch (err) {
-      console.error("Failed to play mix:", err);
-    }
+  const handlePlayAll = () => {
+    void playSource(mixPlayable());
   };
-
-  const handleShuffle = async () => {
-    if (tracks.length === 0) return;
-    const firstIdx = Math.floor(Math.random() * tracks.length);
-    const first = tracks[firstIdx];
-    const rest = tracks.filter((_, i) => i !== firstIdx);
-    try {
-      setShuffledQueue(rest, { source: mixSource });
-      await playTrack(first);
-    } catch (err) {
-      console.error("Failed to shuffle play:", err);
-    }
+  const handleShuffle = () => {
+    void playSource(mixPlayable(), { shuffle: true });
   };
 
   // Favorite state
@@ -212,7 +192,7 @@ export default function MixPage({ mixId, mixInfo, onBack }: MixPageProps) {
 
   if (error) {
     return (
-      <div className="flex-1 bg-linear-to-b from-th-surface to-th-base flex items-center justify-center">
+      <div className="flex-1 page-gradient flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 text-center px-8">
           {isTrackRadio ? (
             <Radio size={48} className="text-th-text-disabled" />
@@ -235,33 +215,35 @@ export default function MixPage({ mixId, mixInfo, onBack }: MixPageProps) {
   }
 
   return (
-    <div className="flex-1 bg-linear-to-b from-th-surface to-th-base overflow-y-auto scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent">
+    <div className="flex-1 page-gradient overflow-y-auto scrollbar-thin scrollbar-thumb-th-button scrollbar-track-transparent">
       <div className="relative">
         <CoverBanner src={displayImage || undefined} />
         <PageContainer>
           <div className="px-8 pb-8 pt-8 flex items-end gap-7 relative z-10">
-            <div className="w-[232px] h-[232px] shrink-0 rounded-lg overflow-hidden shadow-[0_16px_48px_8px_rgba(0,0,0,0.55)] bg-th-surface-hover flex items-center justify-center relative">
-              {displayImage ? (
-                <>
-                  <img
-                    src={displayImage}
-                    alt={displayTitle}
-                    className="w-full h-full object-cover"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = "none";
-                    }}
-                  />
-                  {isTrackRadio && (
-                    <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
-                      <Radio size={64} className="text-white/80" />
-                    </div>
-                  )}
-                </>
-              ) : isTrackRadio ? (
-                <Radio size={56} className="text-th-accent" />
-              ) : (
-                <Music size={56} className="text-th-text-faint" />
-              )}
+            <div className="relative shrink-0 cover-glow">
+              <div className="w-[232px] h-[232px] rounded-lg overflow-hidden bg-th-surface-hover flex items-center justify-center relative">
+                {displayImage ? (
+                  <>
+                    <img
+                      src={displayImage}
+                      alt={displayTitle}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                    {isTrackRadio && (
+                      <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                        <Radio size={64} className="text-white/80" />
+                      </div>
+                    )}
+                  </>
+                ) : isTrackRadio ? (
+                  <Radio size={56} className="text-th-accent" />
+                ) : (
+                  <Music size={56} className="text-th-text-faint" />
+                )}
+              </div>
             </div>
             <div className="flex flex-col gap-2 pb-1 min-w-0">
               <span className="text-[12px] font-bold text-th-text-secondary uppercase tracking-widest">
@@ -310,13 +292,13 @@ export default function MixPage({ mixId, mixInfo, onBack }: MixPageProps) {
             {/* Left — Play & Shuffle buttons */}
             <div className="flex items-center gap-3">
               <SourcePlayButton
-                sourceType={mixSource.type}
+                sourceType={mixMeta.type}
                 sourceId={mixId}
                 onPlay={handlePlayAll}
               />
               <button
                 onClick={handleShuffle}
-                className="flex items-center gap-2 px-6 py-2.5 bg-th-button/40 backdrop-blur-md text-th-text-primary font-bold text-sm rounded-full hover:bg-th-button/60 hover:scale-[1.03] transition-[transform,filter,background-color] duration-150"
+                className="flex items-center gap-2 px-6 py-2.5 bg-th-button/40 text-th-text-primary font-bold text-sm rounded-full hover:bg-th-button/60 hover:scale-[1.03] transition-[transform,filter,background-color] duration-150"
               >
                 <Shuffle size={18} />
                 Shuffle
